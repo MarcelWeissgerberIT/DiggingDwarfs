@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+  <title>Digging Dwarfs</title>
+  <meta name="description" content="Eine gemütliche Zwergen-Ameisenfarm: Beobachte süße Zwerge, wie sie Stollen graben und nach Gold, Kristallen und Diamanten suchen.">
+  <meta name="theme-color" content="#2a1a12">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="apple-mobile-web-app-title" content="Digging Dwarfs">
+  <meta property="og:title" content="Digging Dwarfs">
+  <meta property="og:description" content="Beobachte süße Zwerge in ihrer isometrischen Ameisenfarm beim Graben nach Schätzen.">
+  <meta property="og:image" content="assets/splash.jpg">
+  <link rel="icon" type="image/png" href="assets/favicon.png">
+  <link rel="apple-touch-icon" href="assets/apple-touch-icon.png">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <div id="app">
+    <canvas id="game" aria-label="Zwergen-Ameisenfarm"></canvas>
+
+    <div id="hud-top">
+      <div class="pill" id="gold" title="Gold"><i class="ico" style="background-position:0% 0%"></i><span id="gold-val">0</span></div>
+      <div class="pill small" title="Tageszeit"><span id="clock-ico">☀️</span><span id="day-val">Tag 1</span></div>
+      <div class="pill small" title="Tiefster Stollen"><span>⛰️</span><span id="depth-val">0 m</span></div>
+      <div class="spacer"></div>
+      <div class="pill small" title="Zwerge"><i class="portrait tiny" style="background-position:0% 0%"></i><span id="pop-val">3</span></div>
+      <button class="round" id="btn-menu" aria-label="Menü">☰</button>
+    </div>
+
+    <div id="ticker" aria-live="polite"></div>
+
+    <div id="dwarf-card" hidden>
+      <i class="portrait big" id="card-portrait"></i>
+      <div class="card-main">
+        <div class="card-head"><b id="card-name">Zwerg</b><span id="card-act">…</span></div>
+        <div class="energy"><div id="card-energy"></div></div>
+        <div id="card-stats"></div>
+        <div id="card-sack"></div>
+      </div>
+      <div class="card-btns">
+        <button id="card-follow">👁 Folgen</button>
+        <button id="card-close" aria-label="Schließen">✕</button>
+      </div>
+    </div>
+
+    <div id="hint" hidden></div>
+
+    <div id="hud-bottom">
+      <div class="horn-row">
+        <span class="lbl">Befehle</span>
+        <div id="horns"><span class="horn">📯</span><span class="horn">📯</span><span class="horn">📯</span></div>
+        <button id="btn-speed" class="speed">▶︎ 1×</button>
+        <span id="buff" class="buff" hidden>🍺 <span id="buff-val"></span></span>
+      </div>
+      <div class="actions">
+        <button id="btn-flag"><i class="ico" style="background-position:33.3333% 100%"></i><span>Graben</span></button>
+        <button id="btn-feast"><i class="ico" style="background-position:0% 100%"></i><span>Festmahl</span></button>
+        <button id="btn-shop"><i class="ico" style="background-position:100% 66.6667%"></i><span>Werkstatt</span></button>
+        <button id="btn-treasury"><i class="ico" style="background-position:100% 33.3333%"></i><span>Schätze</span></button>
+      </div>
+    </div>
+
+    <div id="sheet" hidden><div id="sheet-panel"><div id="sheet-body"></div></div></div>
+    <div id="toast"></div>
+
+    <div id="start">
+      <div class="start-inner">
+        <div id="loading">
+          <div class="load-track"><div id="load-bar"></div></div>
+          <p id="load-text">Die Zwerge packen ihre Spitzhacken…</p>
+        </div>
+        <div id="start-buttons" hidden>
+          <button id="btn-play" class="big-btn">Spielen</button>
+          <button id="btn-new" class="link-btn" hidden>Neues Spiel beginnen</button>
+          <p class="tagline">Eine gemütliche Zwergen-Ameisenfarm zum Zuschauen</p>
+        </div>
+      </div>
+    </div>
+  </div>
+  <noscript>Digging Dwarfs braucht JavaScript.</noscript>
+  <script type="module" src="js/main.js"></script>
+</body>
+</html>
