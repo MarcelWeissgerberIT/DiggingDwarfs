@@ -15,6 +15,8 @@ import { hash2, clamp, lerp } from './rng.js';
 const TX = 64;            // texels per cell (textures are 256px = 4 cells)
 const SPRITE = 256;       // dwarf atlas cell size
 const HALF = SLAB / 2;
+const MEADOW = 4.6;       // depth of the garden behind the glass
+const INK = '#3b2414';
 
 const SKY = [
   // phase, top, bottom
@@ -252,6 +254,7 @@ export class Renderer {
     this.identity();
     this.computeRange();
     this.drawBackground();
+    this.drawMeadow();
     this.drawBackWalls();
     this.drawInterior();
     this.drawLadders();
@@ -448,7 +451,8 @@ export class Renderer {
       }
     }
     if (!segs.length) return;
-    this.setBack(1, 0.12);
+    // ladders stand in the middle of the shaft, right behind the climbing dwarf
+    this.setBack(1, HALF - 0.02);
     const draw = (lw, col) => {
       ctx.lineWidth = lw;
       ctx.strokeStyle = col;
@@ -464,8 +468,8 @@ export class Renderer {
       ctx.stroke();
     };
     ctx.lineCap = 'round';
-    draw(0.09, '#2e1c10');
-    draw(0.05, '#b98049');
+    draw(0.11, '#2e1c10');
+    draw(0.065, '#c08a52');
     this.identity();
   }
 
@@ -476,7 +480,7 @@ export class Renderer {
     for (let y = Math.max(0, this.y0); y <= this.y1; y++) {
       for (let x = this.x0; x <= this.x1; x++) {
         if (!w.flag(x, y, F_BRIDGE)) continue;
-        const z0 = w.flag(x, y, F_LADDER) ? SLAB * 0.45 : 0.04;
+        const z0 = w.flag(x, y, F_LADDER) ? HALF + 0.05 : 0.04;
         this.box(x - 0.04, x + 1.04, y + 0.93, y + 1.03, z0, SLAB - 0.03, cols, ['top', 'front']);
       }
     }
@@ -515,7 +519,7 @@ export class Renderer {
 
   drawDwarf(d) {
     const ctx = this.ctx, T = this.T;
-    const Z = d.state === 'feast' ? 0.03 : HALF;
+    const Z = this.dwarfZ(d);
     const fx = d.state === 'feast' ? ((d.id * 0.37) % 0.6) - 0.3 : 0;
     let [sx, sy] = this.proj(d.x + fx, d.y, Z);
     if (d.alpha <= 0.01) return;
@@ -599,11 +603,11 @@ export class Renderer {
       const cols = { front: '#8a5a32', top: '#c99559', side: '#6e4626' };
       this.box(b.x - 0.04, b.x - 0.04 + 1.08 * prog, b.y + 0.93, b.y + 1.03, 0.04, SLAB - 0.03, cols, ['top', 'front']);
     } else {
-      this.setBack(1, 0.12);
+      this.setBack(1, HALF - 0.02);
       ctx.lineCap = 'round';
       const top = Math.min(b.y, b.fy), bot = Math.max(b.y, b.fy) + 1;
       const end = top + (bot - top) * prog;
-      for (const [lw, col] of [[0.09, '#2e1c10'], [0.05, '#b98049']]) {
+      for (const [lw, col] of [[0.11, '#2e1c10'], [0.065, '#c08a52']]) {
         ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.beginPath();
         ctx.moveTo(b.x + 0.3, top); ctx.lineTo(b.x + 0.3, end);
         ctx.moveTo(b.x + 0.7, top); ctx.lineTo(b.x + 0.7, end);
@@ -835,22 +839,246 @@ export class Renderer {
     ctx.stroke();
   }
 
-  prop(name, X, heightCells, anchorX = 0.5, Z = HALF) {
-    const img = this.a.img[name];
-    const T = this.T;
-    const h = heightCells * T;
-    const w = h * (img.width / img.height);
-    const [sx, sy] = this.proj(X, 0, Z);
-    this.ctx.drawImage(img, sx - w * anchorX, sy - h + T * 0.06, w, h);
-    return [sx, sy, w, h];
+  // ---------- the garden on top of the ant farm ----------
+  // A real iso meadow behind the glass: buildings and trees stand on it
+  // instead of being pasted onto the thin top edge of the slab.
+  drawMeadow() {
+    if (this.y0 > 3) return;
+    const ctx = this.ctx;
+    this.setFloor(0);
+    ctx.fillStyle = this.pattern('grass', 'front');
+    ctx.fillRect(-0.32 * TX, -MEADOW * TX, (W + 0.64) * TX, MEADOW * TX);
+    this.setFloor(0, 1);
+    const sh = ctx.createLinearGradient(0, -MEADOW, 0, -MEADOW + 1.6);
+    sh.addColorStop(0, 'rgba(30,60,20,0.35)');
+    sh.addColorStop(1, 'rgba(30,60,20,0)');
+    ctx.fillStyle = sh;
+    ctx.fillRect(-0.32, -MEADOW, W + 0.64, 1.6);
+    const flowers = ['#fff6e0', '#ffd34d', '#ff9fb2', '#c9b6ff'];
+    for (let i = 0; i < 90; i++) {
+      const X = hash2(i, 1, 77) * W, Z = -MEADOW + 0.3 + hash2(i, 2, 77) * (MEADOW - 0.5);
+      ctx.fillStyle = flowers[i % 4];
+      ctx.beginPath(); ctx.arc(X, Z, 0.05, 0, Math.PI * 2); ctx.fill();
+    }
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 0.05;
+    ctx.beginPath();
+    ctx.moveTo(-0.32, 0); ctx.lineTo(-0.32, -MEADOW); ctx.lineTo(W + 0.32, -MEADOW); ctx.lineTo(W + 0.32, 0);
+    ctx.stroke();
+    this.identity();
+  }
+
+  // a box face filled with an earth texture (kind 'front' = plane Z=c, 'side' = plane X=c)
+  texFace(kind, a0, a1, b0, b1, c, tex) {
+    const ctx = this.ctx;
+    if (kind === 'front') this.setBack(TX, c); else this.setSide(c);
+    ctx.fillStyle = this.pattern(tex, kind === 'front' ? 'front' : 'side');
+    ctx.fillRect(a0 * TX, b0 * TX, (a1 - a0) * TX, (b1 - b0) * TX);
+    if (kind === 'front') this.setBack(1, c); else this.setSide(c, 1);
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = 0.04;
+    ctx.strokeRect(a0, b0, a1 - a0, b1 - b0);
+    this.identity();
+  }
+
+  poly(pts, fill, lw = 0.035) {
+    const ctx = this.ctx;
+    ctx.beginPath();
+    pts.forEach(([X, D, Z], i) => { const [x, y] = this.proj(X, D, Z); if (i) ctx.lineTo(x, y); else ctx.moveTo(x, y); });
+    ctx.closePath();
+    ctx.fillStyle = fill;
+    ctx.fill();
+    ctx.strokeStyle = INK;
+    ctx.lineWidth = Math.max(1, this.T * lw);
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+  }
+
+  // round blobs with a single outline around their union (tree crowns, rocks)
+  blobs(cx, cy, R, list, base, light) {
+    const ctx = this.ctx;
+    const lw = Math.max(1.5, this.T * 0.035);
+    ctx.fillStyle = INK;
+    for (const [bx, by, br] of list) { ctx.beginPath(); ctx.arc(cx + bx * R, cy + by * R, br * R + lw, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = base;
+    for (const [bx, by, br] of list) { ctx.beginPath(); ctx.arc(cx + bx * R, cy + by * R, br * R, 0, Math.PI * 2); ctx.fill(); }
+    ctx.fillStyle = light;
+    for (const [bx, by, br] of list) {
+      ctx.beginPath(); ctx.arc(cx + bx * R - br * R * 0.18, cy + by * R - br * R * 0.2, br * R * 0.66, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+
+  drawOak(X, Z, s) {
+    const bark = { front: '#7a4a2a', top: '#9b6a3c', side: '#5a3420' };
+    this.box(X - 0.13 * s, X + 0.13 * s, -1.0 * s, 0, Z - 0.13 * s, Z + 0.13 * s, bark, ['front', 'side']);
+    const [cx, cy] = this.proj(X, -1.55 * s, Z);
+    const sway = Math.sin(this.time * 0.8 + X) * this.T * 0.015;
+    this.blobs(cx + sway, cy, this.T * 0.6 * s,
+      [[0, 0.25, 0.85], [-0.6, 0.15, 0.72], [0.6, 0.2, 0.75], [-0.3, -0.35, 0.75], [0.35, -0.3, 0.72], [0, -0.7, 0.6]],
+      '#4f9a36', '#6dbb45');
+  }
+
+  drawPine(X, Z, s) {
+    const ctx = this.ctx, T = this.T;
+    const bark = { front: '#7a4a2a', top: '#9b6a3c', side: '#5a3420' };
+    this.box(X - 0.09 * s, X + 0.09 * s, -0.5 * s, 0, Z - 0.09 * s, Z + 0.09 * s, bark, ['front', 'side']);
+    const [cx, base] = this.proj(X, -0.35 * s, Z);
+    const tiers = [[0.85, 1.0, 0], [0.68, 0.9, 0.62], [0.48, 0.8, 1.18]];
+    const sway = Math.sin(this.time * 0.7 + X) * T * 0.012;
+    for (const [w, h, up] of tiers) {
+      const by = base - up * T * s, ww = w * T * s, hh = h * T * s;
+      const x = cx + sway * (1 + up);
+      ctx.beginPath();
+      ctx.moveTo(x - ww, by);
+      ctx.quadraticCurveTo(x - ww * 0.5, by + hh * 0.12, x, by + hh * 0.02);
+      ctx.quadraticCurveTo(x + ww * 0.5, by + hh * 0.12, x + ww, by);
+      ctx.lineTo(x, by - hh);
+      ctx.closePath();
+      ctx.fillStyle = '#2f7341';
+      ctx.fill();
+      ctx.save();
+      ctx.clip();
+      ctx.fillStyle = '#45965a';
+      ctx.beginPath(); ctx.moveTo(x - ww * 1.1, by + hh); ctx.lineTo(x, by - hh); ctx.lineTo(x - ww * 0.1, by + hh); ctx.fill();
+      ctx.restore();
+      ctx.strokeStyle = INK;
+      ctx.lineWidth = Math.max(1.5, T * 0.035);
+      ctx.lineJoin = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x - ww, by);
+      ctx.quadraticCurveTo(x - ww * 0.5, by + hh * 0.12, x, by + hh * 0.02);
+      ctx.quadraticCurveTo(x + ww * 0.5, by + hh * 0.12, x + ww, by);
+      ctx.lineTo(x, by - hh);
+      ctx.closePath();
+      ctx.stroke();
+    }
+  }
+
+  drawRocks(X, Z, s) {
+    const [cx, cy] = this.proj(X, 0, Z);
+    this.blobs(cx, cy - this.T * 0.12 * s, this.T * 0.3 * s,
+      [[-0.55, 0.15, 0.62], [0.5, 0.25, 0.5], [0, -0.1, 0.72]], '#8a939e', '#b3bcc6');
+  }
+
+  drawSign(X, Z) {
+    const wood = { front: '#9b6a3c', top: '#c99559', side: '#6e4626' };
+    this.box(X - 0.05, X + 0.05, -0.95, 0, Z - 0.05, Z + 0.05, wood, ['front', 'side']);
+    this.box(X - 0.36, X + 0.36, -1.02, -0.66, Z + 0.05, Z + 0.1, wood, ['front', 'side', 'top']);
+    const [sx, sy] = this.proj(X, -0.84, Z + 0.1);
+    this.icon('pick', sx, sy, this.T * 0.3);
+  }
+
+  drawFence() {
+    const ctx = this.ctx, T = this.T;
+    const Z = -MEADOW + 0.25;
+    const wood = { front: '#9b6a3c', top: '#c99559', side: '#6e4626' };
+    for (const [D, lw, col] of [[-0.42, 0.09, INK], [-0.2, 0.09, INK], [-0.42, 0.05, '#b98049'], [-0.2, 0.05, '#b98049']]) {
+      const [ax, ay] = this.proj(0.3, D, Z), [bx, by] = this.proj(W - 0.3, D, Z);
+      ctx.strokeStyle = col; ctx.lineWidth = T * lw; ctx.lineCap = 'round';
+      ctx.beginPath(); ctx.moveTo(ax, ay); ctx.lineTo(bx, by); ctx.stroke();
+    }
+    for (let X = 0.3; X < W; X += 1.65) this.box(X - 0.06, X + 0.06, -0.58, 0, Z - 0.06, Z + 0.06, wood, ['front', 'side', 'top']);
+  }
+
+  // head frame with a winch over the main shaft
+  drawHeadframe() {
+    const X = ENTRANCE_X, ctx = this.ctx, T = this.T;
+    const wood = { front: '#9b6a3c', top: '#c99559', side: '#6e4626' };
+    this.box(X - 0.16, X + 0.0, -1.5, 0, 0.0, 0.13, wood, ['front', 'side', 'top']);
+    this.box(X + 1.0, X + 1.16, -1.5, 0, 0.0, 0.13, wood, ['front', 'side', 'top']);
+    this.box(X - 0.3, X + 1.3, -1.68, -1.5, -0.03, 0.16, wood, ['front', 'side', 'top']);
+    this.poly([[X - 0.42, -1.68, 0.3], [X + 1.42, -1.68, 0.3], [X + 1.42, -2.05, 0.06], [X - 0.42, -2.05, 0.06]], '#b5523b');
+    this.poly([[X + 1.42, -1.68, 0.3], [X + 1.42, -1.68, -0.18], [X + 1.42, -2.05, 0.06]], '#8e3d2c');
+    const [wx, wy] = this.proj(X + 0.5, -1.32, 0.14);
+    const [rx, ry] = this.proj(X + 0.5, -0.05, 0.14);
+    ctx.strokeStyle = '#d8c39a'; ctx.lineWidth = Math.max(1, T * 0.025);
+    ctx.beginPath(); ctx.moveTo(wx + T * 0.15, wy); ctx.lineTo(rx + T * 0.15, ry); ctx.stroke();
+    const r = T * 0.17;
+    ctx.fillStyle = '#6e4626'; ctx.strokeStyle = INK; ctx.lineWidth = Math.max(1, T * 0.03);
+    ctx.beginPath(); ctx.arc(wx, wy, r, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    ctx.strokeStyle = '#c99559';
+    ctx.beginPath();
+    for (let k = 0; k < 3; k++) {
+      const a = this.time * 0.6 + (k * Math.PI) / 3;
+      ctx.moveTo(wx - Math.cos(a) * r * 0.75, wy - Math.sin(a) * r * 0.75);
+      ctx.lineTo(wx + Math.cos(a) * r * 0.75, wy + Math.sin(a) * r * 0.75);
+    }
+    ctx.stroke();
+    const [lx, ly] = this.proj(X - 0.08, -1.18, 0.2);
+    this.icon('lantern', lx, ly, T * 0.34);
+    this.lights.push([X - 0.08, -1.18, 0.2, 1.8, 0.9, '#ffb050']);
+  }
+
+  drawCottage() {
+    const ctx = this.ctx, T = this.T;
+    const x0 = COTTAGE_X - 0.6, x1 = COTTAGE_X + 1.6, z0 = -2.8, z1 = -0.7, top = -1.25, ridge = -2.25;
+    const zm = (z0 + z1) / 2;
+    this.texFace('front', x0, x1, top, 0, z1, 'ruins');
+    this.texFace('side', z0, z1, top, 0, x1, 'ruins');
+    this.poly([[x1, top, z1], [x1, top, z0], [x1, ridge + 0.1, zm]], '#b07a45');
+    // door
+    const dx = COTTAGE_X + 0.5;
+    this.setBack(1, z1);
+    ctx.beginPath();
+    ctx.moveTo(dx - 0.24, 0); ctx.lineTo(dx - 0.24, -0.55);
+    ctx.quadraticCurveTo(dx - 0.24, -0.86, dx, -0.86);
+    ctx.quadraticCurveTo(dx + 0.24, -0.86, dx + 0.24, -0.55);
+    ctx.lineTo(dx + 0.24, 0); ctx.closePath();
+    ctx.fillStyle = '#8a5226'; ctx.fill();
+    ctx.strokeStyle = INK; ctx.lineWidth = 0.04; ctx.stroke();
+    ctx.strokeStyle = 'rgba(59,36,20,0.6)'; ctx.lineWidth = 0.02;
+    ctx.beginPath(); ctx.moveTo(dx - 0.08, -0.8); ctx.lineTo(dx - 0.08, 0); ctx.moveTo(dx + 0.08, -0.8); ctx.lineTo(dx + 0.08, 0); ctx.stroke();
+    ctx.fillStyle = '#f6c445';
+    ctx.beginPath(); ctx.arc(dx + 0.14, -0.42, 0.035, 0, Math.PI * 2); ctx.fill();
+    // window on the side wall, warm at night
+    this.setSide(x1, 1);
+    const glow = this.night > 0.3;
+    ctx.fillStyle = glow ? '#ffd77a' : '#8fc9ef';
+    ctx.fillRect(zm - 0.24, -0.92, 0.48, 0.42);
+    ctx.strokeStyle = INK; ctx.lineWidth = 0.04;
+    ctx.strokeRect(zm - 0.24, -0.92, 0.48, 0.42);
+    ctx.beginPath(); ctx.moveTo(zm, -0.92); ctx.lineTo(zm, -0.5); ctx.moveTo(zm - 0.24, -0.71); ctx.lineTo(zm + 0.24, -0.71); ctx.stroke();
+    this.identity();
+    // chimney behind the ridge
+    const stone = { front: '#8d96a1', top: '#b3bcc6', side: '#6d7580' };
+    this.box(x0 + 1.4, x0 + 1.72, -2.7, -1.6, zm - 0.55, zm - 0.23, stone, ['front', 'side', 'top']);
+    // thatched roof
+    const e = 0.18;
+    const roof = [[x0 - e, top + 0.05, z1 + 0.22], [x1 + e, top + 0.05, z1 + 0.22], [x1 + e, ridge, zm], [x0 - e, ridge, zm]];
+    this.poly(roof, '#e0ad4f');
+    ctx.strokeStyle = '#b9822f';
+    ctx.lineWidth = Math.max(1, T * 0.02);
+    ctx.beginPath();
+    for (let t = 0.06; t < 1; t += 0.085) {
+      const X = x0 - e + (x1 - x0 + 2 * e) * t;
+      const [ax, ay] = this.proj(X, top + 0.03, z1 + 0.2), [bx, by] = this.proj(X, ridge + 0.04, zm);
+      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
+    }
+    ctx.stroke();
+    this.poly([[x1 + e, top + 0.05, z1 + 0.22], [x1 + e, top + 0.05, z0 - 0.22], [x1 + e, ridge, zm]], '#c9923d');
+    const [r0x, r0y] = this.proj(x0 - e, ridge, zm), [r1x, r1y] = this.proj(x1 + e, ridge, zm);
+    ctx.strokeStyle = '#a06b26'; ctx.lineWidth = Math.max(2, T * 0.07); ctx.lineCap = 'round';
+    ctx.beginPath(); ctx.moveTo(r0x, r0y); ctx.lineTo(r1x, r1y); ctx.stroke();
+    // chimney smoke
+    this.smokeT -= this.dt;
+    if (this.smokeT <= 0) {
+      this.smokeT = 0.6 + Math.random() * 0.5;
+      const [ix, iy] = this.isoOf(x0 + 1.56, -2.75, zm - 0.39);
+      this.particles.push({ k: 'smoke', x: ix, y: iy, vx: 0.05, vy: -0.35, life: 3.2, t: 0, s: 0.1, c: '#ffffff' });
+    }
+    if (glow) this.lights.push([x1, -0.7, zm, 2.4, this.night, '#ffc070']);
+  }
+
+  // where a surface dwarf stands in depth: at the table, or stepping through the cottage door
+  dwarfZ(d) {
+    if (d.state === 'feast') return 0.03;
+    if (d.cy === -1 && d.cx === COTTAGE_X && d.alpha < 1) return HALF - (1 - d.alpha) * 0.95;
+    return HALF;
   }
 
   drawSurface() {
     const g = this.game, ctx = this.ctx, T = this.T;
-    if (this.y0 > 2) {
-      // still draw dwarfs that are on the surface (none visible) – nothing to do
-      return;
-    }
+    if (this.y0 > 3) return;
     // grass tufts along the front edge
     ctx.strokeStyle = '#3f8a2a';
     ctx.lineWidth = Math.max(1, T * 0.025);
@@ -869,49 +1097,26 @@ export class Renderer {
     ctx.stroke();
 
     const list = [];
-    list.push({ k: 0.6, f: () => this.prop('pine', 0.9, 3.0, 0.5, SLAB * 0.3) });
-    list.push({ k: 1.6, f: () => this.prop('sign', 1.75, 1.2, 0.5) });
-    list.push({ k: COTTAGE_X + 0.2, f: () => this.drawCottage() });
-    list.push({ k: 14.8, f: () => this.prop('rocks', 15.2, 1.0) });
-    list.push({ k: 16.6, f: () => this.prop('oak', 17.0, 3.1, 0.5, SLAB * 0.3) });
-    list.push({ k: 18.5, f: () => this.prop('pine', 18.9, 2.7, 0.5, SLAB * 0.3) });
-    list.push({ k: STASH_X + 0.3, f: () => this.drawStash() });
-    list.push({ k: FEAST_X + 4.2, f: () => this.drawTable() });
-    list.push({ k: ENTRANCE_X + 1.3, f: () => this.drawMine() });
+    const add = (X, Z, f) => list.push({ k: X + Z, f });
+    add(-MEADOW, 0, () => this.drawFence());
+    add(1.0, -2.3, () => this.drawPine(1.0, -2.3, 1.1));
+    add(1.75, 0.22, () => this.drawSign(1.75, 0.22));
+    add(ENTRANCE_X + 0.5, 0.06, () => this.drawHeadframe());
+    add(6.3, -2.9, () => this.drawOak(6.3, -2.9, 0.8));
+    add(STASH_X + 0.5, 0.25, () => this.drawStash());
+    list.push({ k: FEAST_X + 4.5, f: () => this.drawTable() });
+    add(9.4, -3.4, () => this.drawPine(9.4, -3.4, 0.85));
+    add(COTTAGE_X + 0.5, -1.75, () => this.drawCottage());
+    add(15.3, 0.12, () => this.drawRocks(15.3, 0.12, 1));
+    add(16.9, -1.7, () => this.drawOak(16.9, -1.7, 1));
+    add(19.4, -3.1, () => this.drawPine(19.4, -3.1, 1.2));
+    add(21.1, -0.2, () => this.drawRocks(21.1, -0.2, 0.7));
+    add(22.5, -1.5, () => this.drawOak(22.5, -1.5, 0.85));
     for (const d of g.dwarfs) {
-      if (d.y <= 0.05 && d.alpha > 0.01) list.push({ k: d.x, f: () => this.drawDwarf(d) });
+      if (d.y <= 0.05 && d.alpha > 0.01) add(d.x, this.dwarfZ(d), () => this.drawDwarf(d));
     }
     list.sort((a, b) => a.k - b.k);
     for (const it of list) it.f();
-  }
-
-  drawMine() {
-    const [sx, sy, w, h] = this.prop('mine', ENTRANCE_X + 0.5, 1.75, 0.33, HALF);
-    this.lights.push([ENTRANCE_X + 0.4, -0.9, HALF, 1.6, 0.9, '#ffb050']);
-    void sx; void sy; void w; void h;
-  }
-
-  drawCottage() {
-    const [sx, sy, w, h] = this.prop('cottage', COTTAGE_X + 0.5, 2.4, 0.42, SLAB * 0.3);
-    const T = this.T;
-    // chimney smoke
-    this.smokeT -= this.dt;
-    if (this.smokeT <= 0) {
-      this.smokeT = 0.5 + Math.random() * 0.4;
-      const ix = (sx - w * 0.42 + w * 0.66 - this.ox) / T;
-      const iy = (sy - h * 0.86 - this.oy) / T;
-      this.particles.push({ k: 'smoke', x: ix, y: iy, vx: 0.05, vy: -0.35, life: 3.2, t: 0, s: 0.12, c: '#ffffff' });
-    }
-    if (this.night > 0.3) {
-      this.lights.push([COTTAGE_X + 0.6, -0.6, SLAB * 0.3, 2.2, this.night, '#ffc070']);
-      const home = this.game.dwarfs.filter((d) => d.state === 'home').length;
-      if (home) {
-        this.ctx.fillStyle = `rgba(255,190,90,${0.5 * this.night})`;
-        this.ctx.beginPath();
-        this.ctx.ellipse(sx - w * 0.42 + w * 0.36, sy - h * 0.33, w * 0.06, h * 0.07, 0, 0, Math.PI * 2);
-        this.ctx.fill();
-      }
-    }
   }
 
   drawStash() {

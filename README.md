@@ -30,8 +30,10 @@ verpasste Zeit (bis zu 30 Minuten) nach.
 - Zwergen-KI mit Dijkstra-Wegsuche (Graben, Leiter- und Brückenbau kosten Zeit, vorhandene Gänge sind billig)
   und ameisenartigem Stollenbau; die Welt wird beim Tiefergraben stückweise nachgeneriert.
 - Sounds & Musik werden per WebAudio synthetisiert.
-- Zwerge, Dino-Skelette, Requisiten, Gesteinstexturen, Titelbild und App-Icon wurden mit **OpenArt**
+- Zwerge, Dino-Skelette, Gesteinstexturen, Titelbild und App-Icon wurden mit **OpenArt**
   generiert und mit `tools/process_assets.py` freigestellt und zugeschnitten.
+- Die Wiese oben (Förderturm, Steinhäuschen, Bäume, Zaun, Tafel) wird direkt isometrisch gezeichnet,
+  damit sie zur Erdscheibe passt.
 - Die Icons (Schätze, Bedienelemente) sind ein eigenes, handgezeichnetes Vektor-Set (`js/icons.js`),
   das sowohl im Canvas als auch in der Oberfläche benutzt wird.
 

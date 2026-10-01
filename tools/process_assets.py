@@ -4,8 +4,8 @@
 Usage: python3 tools/process_assets.py <raw_dir>
 
 <raw_dir> must contain the original downloads:
-  dwarfs.png (4x4 sheet on magenta)   props.png (3x2 sheet on magenta)
-  dinos.png  (2x2 sheet on magenta)   splash.png, icon.png
+  dwarfs.png (4x4 sheet on magenta)   dinos.png (2x2 sheet on magenta)
+  splash.png, icon.png
   tex_{dirt,clay,stone,deep,grass,magma,crystal,obsidian,ruins}.png
 """
 import json
@@ -151,28 +151,6 @@ def process_dwarfs(raw):
     print("dwarfs.png", sheet.size)
 
 
-def process_props(raw):
-    img = Image.open(os.path.join(raw, "props.png"))
-    names = ["mine", "cottage", "pine", "oak", "rocks", "sign"]
-    meta = {}
-    os.makedirs(os.path.join(OUT, "props"), exist_ok=True)
-    for r, c, cell in split(img, 3, 2):
-        name = names[r * 3 + c]
-        rgba = key_cell(cell, tol=80, key="magenta")
-        rgba = despill_all(rgba, "magenta")
-        if name != "cottage":  # keep the little smoke puff on the cottage
-            rgba = remove_specks(rgba)
-        x0, y0, x1, y1 = bbox(rgba[..., 3])
-        im = Image.fromarray(rgba).crop((x0, y0, x1, y1))
-        f = 420.0 / max(im.width, im.height)
-        im = im.resize((round(im.width * f), round(im.height * f)), Image.LANCZOS)
-        im.save(os.path.join(OUT, "props", name + ".png"), optimize=True)
-        meta[name] = [im.width, im.height]
-        print(name, im.size)
-    with open(os.path.join(OUT, "props", "props.json"), "w") as fh:
-        json.dump(meta, fh)
-
-
 def process_dinos(raw):
     img = Image.open(os.path.join(raw, "dinos.png"))
     os.makedirs(os.path.join(OUT, "dinos"), exist_ok=True)
@@ -225,7 +203,6 @@ if __name__ == "__main__":
     raw = sys.argv[1]
     os.makedirs(OUT, exist_ok=True)
     process_dwarfs(raw)
-    process_props(raw)
     process_dinos(raw)
     process_textures(raw)
     process_misc(raw)
