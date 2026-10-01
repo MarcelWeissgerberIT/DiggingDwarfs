@@ -1,14 +1,12 @@
 // Dijkstra over the grid. Rows -1 (surface air) .. H-1.
 // Empty cells are cheap to walk through, solid cells cost their digging time,
 // so dwarfs prefer existing tunnels and dig only where they have to.
-import { W, H, MATS, MAT, ENTRANCE_X } from './config.js';
+import { W, MAT, mat, ENTRANCE_X } from './config.js';
 import { hash2 } from './rng.js';
 
-const N = W * (H + 1);
-const node = (x, y) => (y + 1) * W + x;
+export const node = (x, y) => (y + 1) * W + x;
 export const nodeX = (n) => n % W;
 export const nodeY = (n) => Math.floor(n / W) - 1;
-export { node };
 
 class Heap {
   constructor() { this.k = []; this.v = []; }
@@ -50,6 +48,8 @@ export function dijkstra(world, sx, sy, opts = {}) {
   const noDig = !!opts.noDig;
   const seed = opts.seed ?? 0;
   const maxCost = opts.maxCost ?? Infinity;
+  const H = world.H;
+  const N = W * (H + 1);
   const dist = new Float32Array(N).fill(Infinity);
   const prev = new Int32Array(N).fill(-1);
   const heap = new Heap();
@@ -61,20 +61,19 @@ export function dijkstra(world, sx, sy, opts = {}) {
     const d = dist[cur];
     if (d > maxCost) break;
     const cx = nodeX(cur), cy = nodeY(cur);
-    // a dwarf can't walk *through* a cell that is still solid; it digs it first,
-    // so expansion from a solid node is fine (it will be dug by then).
     for (let k = 0; k < 4; k++) {
       const nx = cx + (k === 0 ? 1 : k === 1 ? -1 : 0);
       const ny = cy + (k === 2 ? 1 : k === 3 ? -1 : 0);
       if (nx < 0 || nx >= W || ny < -1 || ny >= H) continue;
       let c;
       if (world.empty(nx, ny)) {
-        c = ny !== cy ? 1.35 : 1;
+        // climbing needs ladders, crossing holes needs a plank: both take time to build
+        if (ny !== cy) c = 1.35 + (world.ladder(cx, cy) && world.ladder(nx, ny) ? 0 : 2.5);
+        else c = 1 + (world.supported(nx, ny) ? 0 : world.ladder(nx, ny) ? 0.4 : 3);
       } else {
-        if (noDig) continue;
-        const m = world.get(nx, ny);
-        if (m === MAT.BEDROCK || MATS[m].hard > pick) continue;
-        c = 1 + MATS[m].time * 2.2 + hash2(nx, ny, seed) * 2.5 + (ny !== cy ? 3 : 0);
+        if (noDig || !world.canDig(nx, ny, pick)) continue;
+        c = 1 + mat(world.get(nx, ny)).time * 2.2 + hash2(nx, ny, seed) * 2.5 +
+          (ny !== cy ? 5.5 : (world.empty(nx, ny + 1) ? 3 : 0));
         // keep the meadow mostly intact: extra entrances are expensive
         if (ny === 0 && cy === -1 && nx !== ENTRANCE_X) c += 14;
       }
@@ -93,7 +92,7 @@ export function dijkstra(world, sx, sy, opts = {}) {
 // Cells from start (excluded) to target (included), or null.
 export function pathTo(map, tx, ty) {
   let n = node(tx, ty);
-  if (!isFinite(map.dist[n])) return null;
+  if (!(n < map.dist.length) || !isFinite(map.dist[n])) return null;
   const out = [];
   while (n !== map.start) {
     out.push({ x: nodeX(n), y: nodeY(n) });
@@ -105,5 +104,6 @@ export function pathTo(map, tx, ty) {
 }
 
 export function costTo(map, x, y) {
-  return map.dist[node(x, y)];
+  const n = node(x, y);
+  return n < map.dist.length ? map.dist[n] : Infinity;
 }

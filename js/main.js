@@ -1,5 +1,5 @@
 // Boot, main loop and glue between simulation, renderer, audio and UI.
-import { ISO, SLAB, MATS, ORES, ENTRANCE_X, STASH_X } from './config.js';
+import { ISO, SLAB, ORES, ENTRANCE_X, STASH_X } from './config.js';
 import { loadAssets } from './assets.js';
 import { Game } from './game.js';
 import { Renderer } from './render.js';
@@ -23,12 +23,24 @@ function onScreen(x, y) {
   return sx > -50 && sy > -50 && sx < r.cv.width + 50 && sy < r.cv.height + 50;
 }
 
+// pick and hammer noises only for the dwarf you watch (or when zoomed in close)
+function audible(d) {
+  const r = app.renderer;
+  return r.follow === d || r.selected === d || (r.cam.T > 70 && onScreen(d.cx, d.cy));
+}
+
 const hooks = {
-  event: (msg, icon, important) => app.ui?.ticker(msg, icon, important),
+  event: (msg, icon, big) => app.ui?.ticker(msg, icon, big),
   strike: (d, x, y, m) => {
     if (!app.renderer || app.simulating) return;
     app.renderer.crumbs(x, y, m, 3);
-    if (onScreen(x, y)) app.audio.play(MATS[m].hard >= 2 ? 'dig-hard' : 'dig-soft', app.renderer.cam.T > 34 ? 1 : 0.5);
+    if (audible(d)) app.audio.play('dig');
+  },
+  hammer: (d) => {
+    if (!app.renderer || app.simulating) return;
+    const b = d.build;
+    if (b) app.renderer.sparkle(b.x + 0.5, b.y + 0.9, '#d9a066', 2);
+    if (audible(d)) app.audio.play('build');
   },
   dug: (d, x, y, m, ore) => {
     if (!app.renderer || app.simulating) return;
@@ -45,6 +57,12 @@ const hooks = {
     app.renderer.floater(d.x + d.facing * 0.3, d.y - 1.1, '+1', '#e8e8f0');
   },
   cheer: (d) => { if (app.renderer && !app.simulating) app.renderer.confetti(d.x, d.y - 0.6, 16); },
+  dino: (d, dino, bonus) => {
+    if (!app.renderer || app.simulating) return;
+    app.renderer.confetti(dino.x + dino.w / 2, dino.y + dino.h / 2, 50);
+    app.renderer.floater(dino.x + dino.w / 2, dino.y, `+${bonus}`);
+    app.audio.play('discover');
+  },
   heart: (d) => {
     if (app.simulating) return;
     app.renderer.confetti(d.x, d.y - 0.6, 120);
@@ -53,16 +71,16 @@ const hooks = {
   },
   sfx: (name, x, y) => {
     if (app.simulating) return;
-    if (x === undefined || onScreen(x, y) || name === 'horn' || name === 'cheer' || name === 'upgrade') app.audio.play(name);
+    if (x === undefined || onScreen(x, y)) app.audio.play(name);
   },
 };
 
 function resetCamera() {
   const r = app.renderer;
-  r.cam.T = Math.max(30, Math.min(60, r.cssW / (11.5 * ISO)));
+  r.cam.T = Math.max(30, Math.min(60, r.cssW / (10 * ISO)));
   r.follow = null;
   r.selected = null;
-  r.centerOn(ENTRANCE_X + 3.5, 2.5, true);
+  r.centerOn(ENTRANCE_X + 4.5, 4.5, true);
 }
 
 function newGame() {
@@ -85,7 +103,7 @@ function catchUp() {
   app.simulating = false;
   const gained = g.totalGold - before;
   const min = Math.round(away / 60);
-  setTimeout(() => app.ui.ticker(`Während du weg warst (${min} Min.), haben die Zwerge ${gained} Gold gesammelt.`, 'cart', true), 600);
+  if (gained > 0) setTimeout(() => app.ui.ticker(`+${gained} (${min} Min.)`, 'coin', true), 600);
 }
 
 let last = 0;
@@ -114,7 +132,7 @@ async function boot() {
   try {
     assets = await loadAssets((p) => { bar.style.width = `${Math.round(p * 100)}%`; });
   } catch (e) {
-    $('#load-text').textContent = 'Fehler beim Laden: ' + e.message;
+    $('#loading').textContent = 'Fehler: ' + e.message;
     return;
   }
   app.game = new Game(hooks);

@@ -18,7 +18,7 @@
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
@@ -26,12 +26,12 @@
     <canvas id="game" aria-label="Zwergen-Ameisenfarm"></canvas>
 
     <div id="hud-top">
-      <div class="pill" id="gold" title="Gold"><i class="ico" style="background-position:0% 0%"></i><span id="gold-val">0</span></div>
-      <div class="pill small" title="Tageszeit"><span id="clock-ico">☀️</span><span id="day-val">Tag 1</span></div>
-      <div class="pill small" title="Tiefster Stollen"><span>⛰️</span><span id="depth-val">0 m</span></div>
+      <div class="pill" id="gold" title="Gold"><span data-icon="coin"></span><span id="gold-val">0</span></div>
+      <div class="pill small" title="Tag"><span id="clock-ico" data-icon="sun"></span><span id="day-val">1</span></div>
       <div class="spacer"></div>
-      <div class="pill small" title="Zwerge"><i class="portrait tiny" style="background-position:0% 0%"></i><span id="pop-val">3</span></div>
-      <button class="round" id="btn-menu" aria-label="Menü">☰</button>
+      <div class="pill small" title="Zwerge"><span data-icon="dwarf"></span><span id="pop-val">3</span></div>
+      <button class="round" id="btn-sound" aria-label="Ton an/aus"><span data-icon="sound"></span></button>
+      <button class="round" id="btn-menu" aria-label="Menü"><span data-icon="menu"></span></button>
     </div>
 
     <div id="ticker" aria-live="polite"></div>
@@ -39,31 +39,30 @@
     <div id="dwarf-card" hidden>
       <i class="portrait big" id="card-portrait"></i>
       <div class="card-main">
-        <div class="card-head"><b id="card-name">Zwerg</b><span id="card-act">…</span></div>
+        <b id="card-name">Zwerg</b>
+        <div id="card-act"></div>
         <div class="energy"><div id="card-energy"></div></div>
-        <div id="card-stats"></div>
         <div id="card-sack"></div>
       </div>
       <div class="card-btns">
-        <button id="card-follow">👁 Folgen</button>
-        <button id="card-close" aria-label="Schließen">✕</button>
+        <button id="card-follow" aria-label="Folgen"><span data-icon="eye"></span></button>
+        <button id="card-close" aria-label="Schließen"><span data-icon="close"></span></button>
       </div>
     </div>
 
-    <div id="hint" hidden></div>
+    <div id="hint" hidden><span data-icon="flag"></span><span>Tippe in die Erde</span></div>
 
     <div id="hud-bottom">
       <div class="horn-row">
-        <span class="lbl">Befehle</span>
-        <div id="horns"><span class="horn">📯</span><span class="horn">📯</span><span class="horn">📯</span></div>
-        <button id="btn-speed" class="speed">▶︎ 1×</button>
-        <span id="buff" class="buff" hidden>🍺 <span id="buff-val"></span></span>
+        <div id="horns"><span class="horn"><span data-icon="horn"></span></span><span class="horn"><span data-icon="horn"></span></span><span class="horn"><span data-icon="horn"></span></span></div>
+        <span id="buff" class="buff" hidden><span data-icon="beer"></span><span id="buff-val"></span></span>
+        <button id="btn-speed" class="speed" aria-label="Tempo"><span data-icon="play"></span></button>
       </div>
       <div class="actions">
-        <button id="btn-flag"><i class="ico" style="background-position:33.3333% 100%"></i><span>Graben</span></button>
-        <button id="btn-feast"><i class="ico" style="background-position:0% 100%"></i><span>Festmahl</span></button>
-        <button id="btn-shop"><i class="ico" style="background-position:100% 66.6667%"></i><span>Werkstatt</span></button>
-        <button id="btn-treasury"><i class="ico" style="background-position:100% 33.3333%"></i><span>Schätze</span></button>
+        <button id="btn-flag" aria-label="Graben-Befehl"><span data-icon="flag"></span></button>
+        <button id="btn-feast" aria-label="Festmahl"><span data-icon="beer"></span></button>
+        <button id="btn-shop" aria-label="Werkstatt"><span data-icon="hammer"></span></button>
+        <button id="btn-treasury" aria-label="Schätze"><span data-icon="chest"></span></button>
       </div>
     </div>
 
@@ -74,12 +73,10 @@
       <div class="start-inner">
         <div id="loading">
           <div class="load-track"><div id="load-bar"></div></div>
-          <p id="load-text">Die Zwerge packen ihre Spitzhacken…</p>
         </div>
         <div id="start-buttons" hidden>
           <button id="btn-play" class="big-btn">Spielen</button>
-          <button id="btn-new" class="link-btn" hidden>Neues Spiel beginnen</button>
-          <p class="tagline">Eine gemütliche Zwergen-Ameisenfarm zum Zuschauen</p>
+          <button id="btn-new" class="link-btn" hidden>Neue Farm</button>
         </div>
       </div>
     </div>

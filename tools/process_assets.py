@@ -4,9 +4,9 @@
 Usage: python3 tools/process_assets.py <raw_dir>
 
 <raw_dir> must contain the original downloads:
-  dwarfs.png  (4x4 sheet on magenta)   items.png (4x4 sheet on green)
-  props.png   (3x2 sheet on magenta)   splash.png, icon.png
-  tex_{dirt,clay,stone,deep,grass,magma}.png
+  dwarfs.png (4x4 sheet on magenta)   props.png (3x2 sheet on magenta)
+  dinos.png  (2x2 sheet on magenta)   splash.png, icon.png
+  tex_{dirt,clay,stone,deep,grass,magma,crystal,obsidian,ruins}.png
 """
 import json
 import os
@@ -151,23 +151,6 @@ def process_dwarfs(raw):
     print("dwarfs.png", sheet.size)
 
 
-def process_items(raw):
-    img = Image.open(os.path.join(raw, "items.png"))
-    S = 160
-    sheet = Image.new("RGBA", (S * 4, S * 4), (0, 0, 0, 0))
-    for r, c, cell in split(img, 4, 4):
-        rgba = key_cell(cell, tol=95, key="green")
-        rgba = despill_all(rgba, "green")
-        rgba = remove_specks(rgba, 0.0005)
-        x0, y0, x1, y1 = bbox(rgba[..., 3])
-        im = Image.fromarray(rgba).crop((x0, y0, x1, y1))
-        f = (S - 12) / max(im.width, im.height)
-        im = im.resize((max(1, round(im.width * f)), max(1, round(im.height * f))), Image.LANCZOS)
-        sheet.alpha_composite(im, (c * S + (S - im.width) // 2, r * S + (S - im.height) // 2))
-    sheet.save(os.path.join(OUT, "items.png"), optimize=True)
-    print("items.png", sheet.size)
-
-
 def process_props(raw):
     img = Image.open(os.path.join(raw, "props.png"))
     names = ["mine", "cottage", "pine", "oak", "rocks", "sign"]
@@ -190,9 +173,29 @@ def process_props(raw):
         json.dump(meta, fh)
 
 
+def process_dinos(raw):
+    img = Image.open(os.path.join(raw, "dinos.png"))
+    os.makedirs(os.path.join(OUT, "dinos"), exist_ok=True)
+    meta = []
+    for r, c, cell in split(img, 2, 2):
+        rgba = key_cell(cell, tol=80, key="magenta")
+        rgba = despill_all(rgba, "magenta")
+        rgba = remove_specks(rgba, 0.001)
+        x0, y0, x1, y1 = bbox(rgba[..., 3])
+        im = Image.fromarray(rgba).crop((x0, y0, x1, y1))
+        f = 640.0 / max(im.width, im.height)
+        im = im.resize((round(im.width * f), round(im.height * f)), Image.LANCZOS)
+        n = r * 2 + c
+        im.save(os.path.join(OUT, "dinos", f"{n}.png"), optimize=True)
+        meta.append(round(im.width / im.height, 3))
+        print("dino", n, im.size)
+    with open(os.path.join(OUT, "dinos", "dinos.json"), "w") as fh:
+        json.dump(meta, fh)
+
+
 def process_textures(raw):
     os.makedirs(os.path.join(OUT, "tex"), exist_ok=True)
-    for n in ["dirt", "clay", "stone", "deep", "grass", "magma"]:
+    for n in ["dirt", "clay", "stone", "deep", "grass", "magma", "crystal", "obsidian", "ruins"]:
         im = Image.open(os.path.join(raw, "tex_" + n + ".png")).convert("RGB")
         a = np.asarray(im).astype(np.float32)
         N = a.shape[0]
@@ -222,7 +225,7 @@ if __name__ == "__main__":
     raw = sys.argv[1]
     os.makedirs(OUT, exist_ok=True)
     process_dwarfs(raw)
-    process_items(raw)
     process_props(raw)
+    process_dinos(raw)
     process_textures(raw)
     process_misc(raw)

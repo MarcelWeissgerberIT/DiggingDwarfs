@@ -1,5 +1,4 @@
 // Loads images and prepares shaded texture variants for the isometric faces.
-import { MATS } from './config.js';
 
 const loadImage = (src) => new Promise((resolve, reject) => {
   const img = new Image();
@@ -43,7 +42,10 @@ function shade(img, { k, tint, t, c: contrast }) {
 export async function loadAssets(onProgress) {
   const list = {
     dwarfs: 'assets/dwarfs.png',
-    items: 'assets/items.png',
+    dino0: 'assets/dinos/0.png',
+    dino1: 'assets/dinos/1.png',
+    dino2: 'assets/dinos/2.png',
+    dino3: 'assets/dinos/3.png',
     mine: 'assets/props/mine.png',
     cottage: 'assets/props/cottage.png',
     pine: 'assets/props/pine.png',
@@ -55,6 +57,9 @@ export async function loadAssets(onProgress) {
     stone: 'assets/tex/stone.jpg',
     deep: 'assets/tex/deep.jpg',
     magma: 'assets/tex/magma.jpg',
+    crystal: 'assets/tex/crystal.jpg',
+    obsidian: 'assets/tex/obsidian.jpg',
+    ruins: 'assets/tex/ruins.jpg',
     grass: 'assets/tex/grass.jpg',
   };
   const keys = Object.keys(list);
@@ -67,10 +72,9 @@ export async function loadAssets(onProgress) {
 
   // shaded variants per material texture
   const tex = {};
-  for (const name of ['dirt', 'clay', 'stone', 'deep', 'magma', 'grass']) {
+  for (const name of ['dirt', 'clay', 'stone', 'deep', 'magma', 'crystal', 'obsidian', 'ruins', 'grass']) {
     tex[name] = {};
     for (const [face, s] of Object.entries(SHADES)) tex[name][face] = shade(img[name], s);
   }
-  const matTex = MATS.map((m) => (m.tex ? tex[m.tex] : null));
-  return { img, tex, matTex };
+  return { img, tex };
 }

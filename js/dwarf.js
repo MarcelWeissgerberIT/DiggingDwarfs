@@ -1,9 +1,9 @@
 // A single dwarf with a tiny ant-like brain.
 import {
-  W, H, MATS, ORES, SACK_SIZE, STASH_X, COTTAGE_X, NAMES, LIKES,
+  W, mat, ORES, SACK_SIZE, STASH_X, COTTAGE_X, NAMES, LIKES,
 } from './config.js';
 import { dijkstra, pathTo, costTo } from './path.js';
-import { F_REV } from './world.js';
+import { F_REV, F_LADDER } from './world.js';
 
 const WALK = 2.3;
 const CLIMB = 1.6;
@@ -12,10 +12,12 @@ let nextId = 1;
 
 const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
 
+// speech bubbles are pictures, not words
 const CHAT = [
-  'Hallo!', 'Na du?', 'Glitzert\'s bei dir?', 'Gold!', 'Bier später?', 'Hihi', 'Echt jetzt?', 'Ich hab Hunger',
-  'Psst…', 'Schöner Bart!', 'Ho ho!', '♪', { icon: 'gold' }, { icon: 'diamond' }, { icon: 'beer' }, 'Tief graben!',
+  { icon: 'gold' }, { icon: 'diamond' }, { icon: 'beer' }, { icon: 'heart' }, { icon: 'note' }, { icon: 'question' },
+  { icon: 'bang' }, { icon: 'star' }, { icon: 'mushroom' }, { icon: 'amethyst' }, '♪', '?', '!',
 ];
+const BUILD_TIME = { ladder: 1.3, bridge: 1.8 };
 
 const DIRS = [
   [[1, 0], 0.33], [[-1, 0], 0.33], [[0, 1], 0.1], [[1, 1], 0.1], [[-1, 1], 0.1], [[0, -1], 0.02], [[1, -1], 0.02],
@@ -47,6 +49,7 @@ export class Dwarf {
     this.depthLove = o.depthLove ?? 0.25 + Math.random() * 0.75;
     this.joined = o.joined ?? 1;
     this.state = o.state === 'home' ? 'home' : 'idle';
+    this.build = null;
     this.timer = o.timer ?? Math.random();
     this.task = null;
     this.path = [];
@@ -68,40 +71,39 @@ export class Dwarf {
     };
   }
 
-  sackValue() { return this.sack.reduce((s, o) => s + ORES[o].value, 0); }
+  // sack items are [oreId, value]
+  sackValue() { return this.sack.reduce((s, it) => s + it[1], 0); }
 
-  say(content, dur = 2.6) {
+  say(content, dur = 2.4) {
     this.bubble = typeof content === 'string' ? { text: content, t: dur, max: dur } : { icon: content.icon, t: dur, max: dur };
   }
 
+  // [icon, two-word label] for the info card
   activity() {
     const t = this.task?.kind;
-    if (this.state === 'home') return 'schläft im Häuschen';
-    if (this.state === 'sleep') return 'macht ein Nickerchen';
-    if (this.state === 'feast') return 'feiert beim Festmahl';
-    if (this.state === 'cheer') return 'jubelt!';
-    if (this.state === 'craft') return 'behaut Steine für die Händler';
-    if (this.state === 'chat') {
-      const o = this.game.dwarfs.find((d) => d.id === this.chatWith);
-      return o ? `plaudert mit ${o.name}` : 'plaudert';
-    }
-    if (this.state === 'dig') {
-      if (t === 'mine') return `gräbt nach ${ORES[this.task.ore]?.name ?? 'Schätzen'}`;
-      if (t === 'flag') return 'gräbt zur Flagge';
-      return `gräbt durch ${MATS[this.game.world.get(this.digCell.x, this.digCell.y)]?.name ?? 'Erde'}`;
+    switch (this.state) {
+      case 'home': return ['moon', 'schläft'];
+      case 'sleep': return ['zzz', 'döst'];
+      case 'feast': return ['beer', 'feiert'];
+      case 'cheer': return ['star', 'jubelt'];
+      case 'craft': return ['hammer', 'klopft Steine'];
+      case 'chat': return ['heart', 'plaudert'];
+      case 'build': return ['hammer', this.build?.kind === 'bridge' ? 'baut Brücke' : 'baut Leiter'];
+      case 'dig': return [t === 'mine' ? ORES[this.task.ore]?.icon ?? 'pick' : t === 'flag' ? 'flag' : 'pick', 'gräbt'];
+      default: break;
     }
     switch (t) {
-      case 'mine': return `will ${ORES[this.task.ore]?.name ?? 'etwas'} holen`;
-      case 'flag': return 'folgt deinem Befehl';
-      case 'deposit': return 'bringt Schätze nach oben';
-      case 'home': return 'geht nach Hause';
-      case 'sleep': return 'sucht ein Schlafplätzchen';
-      case 'feast': return 'eilt zum Festmahl';
-      case 'wander': return 'schlendert herum';
-      case 'craft': return 'geht Steine behauen';
-      case 'chat': return 'will ein Schwätzchen halten';
-      case 'explore': return 'erkundet neue Gänge';
-      default: return 'überlegt…';
+      case 'mine': return [ORES[this.task.ore]?.icon ?? 'pick', 'unterwegs'];
+      case 'flag': return ['flag', 'unterwegs'];
+      case 'deposit': return ['cart', 'trägt Schätze'];
+      case 'home': return ['moon', 'geht heim'];
+      case 'sleep': return ['zzz', 'müde'];
+      case 'feast': return ['beer', 'zum Fest'];
+      case 'wander': return ['note', 'bummelt'];
+      case 'craft': return ['hammer', 'geht klopfen'];
+      case 'chat': return ['heart', 'sucht Gesellschaft'];
+      case 'explore': return ['pick', 'erkundet'];
+      default: return ['question', 'überlegt'];
     }
   }
 
@@ -117,7 +119,7 @@ export class Dwarf {
         if ((this.timer -= dt) <= 0) {
           this.state = 'idle';
           this.timer = 0.4;
-          this.say(pick(['Guten Morgen!', 'Auf geht\'s!', 'Frisch und munter!', '♪']));
+          this.say(pick([{ icon: 'sun' }, '♪']));
         }
         return;
       case 'sleep':
@@ -125,11 +127,26 @@ export class Dwarf {
         if ((this.timer -= dt) <= 0 && this.energy >= 100) {
           this.state = 'idle';
           this.timer = 0.5;
-          this.say('Ausgeschlafen!');
+          this.say({ icon: 'sun' });
         }
         return;
       case 'cheer':
         if ((this.timer -= dt) <= 0) { this.state = 'idle'; this.timer = 0; }
+        return;
+      case 'build':
+        this.swingT += dt;
+        if (this.swingT >= SWING) {
+          this.swingT -= SWING;
+          this.game.hooks.hammer?.(this);
+        }
+        if ((this.timer -= dt) <= 0) {
+          const b = this.build;
+          const w = this.game.world;
+          if (b.kind === 'bridge') w.setBridge(b.x, b.y); else for (const [x, y] of b.cells) w.setLadder(x, y);
+          this.build = null;
+          this.state = 'idle';
+          this.timer = 0;
+        }
         return;
       case 'chat':
         if ((this.chatT -= dt) <= 0) {
@@ -190,9 +207,44 @@ export class Dwarf {
       this.swingT = 0;
       return;
     }
+    // cells we only had to dig out (chamber ceilings) are not entered
+    if (n.digOnly) { this.path.shift(); this.state = 'idle'; this.timer = 0.15; return; }
+    // climbing needs a ladder, crossing a hole needs a plank: build them first
+    if (n.y !== this.cy) {
+      if (!w.ladder(this.cx, this.cy) || !w.ladder(n.x, n.y)) {
+        this.startBuild('ladder', n, [[this.cx, this.cy], [n.x, n.y]], this.cy);
+        return;
+      }
+    } else if (!w.supported(n.x, n.y)) {
+      const after = this.path[1];
+      const goesVertical = after && !after.digOnly && after.x === n.x && after.y !== n.y;
+      if (n.y < 0) {
+        // a hole in the meadow: the shaft ladder doubles as a step
+        this.startBuild('ladder', n, [[n.x, 0]], 0);
+        return;
+      }
+      if (goesVertical) {
+        if (!w.ladder(n.x, n.y)) {
+          const cells = [[n.x, n.y]];
+          if (w.empty(after.x, after.y)) cells.push([after.x, after.y]);
+          this.startBuild('ladder', n, cells, cells.length > 1 ? after.y : n.y);
+          return;
+        }
+      } else {
+        this.startBuild('bridge', n, null, n.y);
+        return;
+      }
+    }
     this.path.shift();
     this.move = n;
     this.state = 'walk';
+  }
+
+  startBuild(kind, n, cells, fy) {
+    this.state = 'build';
+    this.build = { kind, x: n.x, y: n.y, fy, cells, total: BUILD_TIME[kind] };
+    this.timer = BUILD_TIME[kind];
+    this.swingT = 0;
   }
 
   walkUpdate(dt) {
@@ -228,7 +280,7 @@ export class Dwarf {
       this.swingT -= SWING;
       g.hooks.strike?.(this, n.x, n.y, m);
     }
-    this.digProg += (dt * g.digSpeed(this)) / MATS[m].time;
+    this.digProg += (dt * g.digSpeed(this)) / mat(m).time;
     this.energy -= dt * 0.38;
     if (this.digProg >= 1) {
       this.dug++;
@@ -282,14 +334,15 @@ export class Dwarf {
     if (g.isNight() && this.energy < 75 && Math.random() < 0.5) { this.goRest(false); return; }
     const flag = g.flagFor(this);
     if (flag) {
-      if (this.goTo('flag', flag.x, flag.y, { flag })) { this.say(pick(['Jawohl!', 'Wird gemacht!', 'Zu Befehl!'])); return; }
+      if (this.goTo('flag', flag.x, flag.y, { flag })) { this.say({ icon: 'flag' }); return; }
       g.dropFlag(flag, true);
     }
     const map = dijkstra(w, this.cx, this.cy, { pick: g.pickLevel, seed: (Math.random() * 1e9) | 0 });
 
     // 1) known treasure nearby?
     let best = null, bestScore = -Infinity;
-    for (let y = 0; y < H; y++) {
+    const ya = 0, yb = Math.min(w.H, g.deepest + 12);
+    for (let y = ya; y < yb; y++) {
       for (let x = 0; x < W; x++) {
         const i = y * W + x;
         const o = w.ore[i];
@@ -298,8 +351,8 @@ export class Dwarf {
         const c = costTo(map, x, y);
         if (!isFinite(c) || c > 160) continue;
         let s = 12 + ORES[o].value * 0.5 - c * 0.3 + Math.random() * 3;
-        if ((this.likes.includes('Kristall') && (o === 3 || o === 7)) || (this.likes.includes('Gold') && o === 2) ||
-          (this.likes.includes('Knochen') && o === 8)) s += 6;
+        if ((this.likes === 'kristall' && (o === 3 || o === 7)) || (this.likes === 'gold' && o === 2) ||
+          (this.likes === 'knochen' && o === 8)) s += 6;
         if (s > bestScore) { bestScore = s; best = { x, y, o, i }; }
       }
     }
@@ -313,10 +366,10 @@ export class Dwarf {
     if (this.sack.length && Math.random() < 0.35) { if (this.goDeposit()) return; }
 
     // 2) a little break or a chat with a neighbour
-    if (Math.random() < 0.12) {
+    if (Math.random() < 0.16) {
       this.state = 'idle';
       this.timer = 2 + Math.random() * 4;
-      this.say(pick(['♪', 'Päuschen…', 'Hmm…', '♫', { icon: 'mushroom' }, 'Schön hier']));
+      if (Math.random() < 0.5) this.say(pick(['♪', '♫', { icon: 'note' }, { icon: 'heart' }]));
       return;
     }
     if (Math.random() < 0.18) {
@@ -333,7 +386,7 @@ export class Dwarf {
     if (Math.random() < 0.12) {
       const wm = dijkstra(w, this.cx, this.cy, { noDig: true, maxCost: 14 });
       const opts = [];
-      for (let y = -1; y < H; y++) for (let x = 0; x < W; x++) {
+      for (let y = Math.max(-1, this.cy - 15); y < Math.min(w.H, this.cy + 15); y++) for (let x = 0; x < W; x++) {
         const c = costTo(wm, x, y);
         if (c > 3 && c < 14 && w.empty(x, y) && (y === -1 || w.solid(x, y + 1))) opts.push([x, y]);
       }
@@ -350,7 +403,7 @@ export class Dwarf {
     if (this.goBore()) return;
     // fallback: dig towards a random spot near the burrow
     const empties = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = ya; y < yb; y++) for (let x = 0; x < W; x++) {
       if (w.empty(x, y) && isFinite(costTo(map, x, y))) empties.push([x, y]);
     }
     if (!empties.length) empties.push([this.cx, Math.max(0, this.cy)]);
@@ -360,7 +413,7 @@ export class Dwarf {
       const [dx, dy] = randomDir();
       const len = 3 + Math.floor(Math.random() * 6);
       const tx = Math.max(0, Math.min(W - 1, b[0] + dx * len));
-      const ty = Math.max(2, Math.min(H - 3, b[1] + dy * len));
+      const ty = Math.max(2, Math.min(w.H - 3, b[1] + dy * len));
       if (!w.solid(tx, ty) || !w.canDig(tx, ty, g.pickLevel)) continue;
       const c = costTo(map, tx, ty);
       if (!isFinite(c)) continue;
@@ -371,8 +424,8 @@ export class Dwarf {
 
     // nothing diggable – the pick is too weak for what's around.
     // Go up and chisel building stones for the traders instead.
-    g.stuck(this);
-    if (Math.random() < 0.5) this.say(pick(['Zu hart…', 'Bessere Hacke?', 'Hmpf.']));
+    g.stuckNow();
+    if (Math.random() < 0.5) this.say('?');
     if (this.goTo('craft', STASH_X + 1 + Math.floor(Math.random() * 2), -1, { noDig: true })) return;
     this.state = 'idle';
     this.timer = 2 + Math.random() * 3;
@@ -384,7 +437,8 @@ export class Dwarf {
     const g = this.game, w = g.world;
     const wm = dijkstra(w, this.cx, this.cy, { noDig: true });
     const bases = [];
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    const ya = 0, yb = Math.min(w.H, g.deepest + 12);
+    for (let y = ya; y < yb; y++) for (let x = 0; x < W; x++) {
       if (w.empty(x, y) && isFinite(costTo(wm, x, y)) && (w.solid(x - 1, y) || w.solid(x + 1, y) || w.solid(x, y + 1))) bases.push([x, y]);
     }
     if (!bases.length) return false;
@@ -404,7 +458,7 @@ export class Dwarf {
       for (let i = 0; i < len; i++) {
         let nx = x, ny = y;
         if (shaft || (!lastDown && Math.random() < pDown)) ny = y + 1; else nx = x + dir;
-        if (nx < 0 || nx >= W || ny < 1 || ny >= H - 2) {
+        if (nx < 0 || nx >= W || ny < 1 || ny >= w.H - 2) {
           if (shaft || ny !== y) break;
           dir = -dir; continue; // bounce off the glass walls
         }
@@ -451,19 +505,25 @@ export class Dwarf {
     return false;
   }
 
+  // a cosy 3x2 hall: the dwarf widens the gallery and digs the ceiling from below
   goChamber(map) {
     const g = this.game, w = g.world;
     for (let k = 0; k < 12; k++) {
       const x = 1 + Math.floor(Math.random() * (W - 2));
-      const y = 4 + Math.floor(Math.random() * (Math.min(H - 4, g.deepest + 2) - 4));
-      if (!w.empty(x, y) || !w.solid(x, y + 1) || !isFinite(costTo(map, x, y))) continue;
+      const y = 4 + Math.floor(Math.random() * (Math.min(w.H - 4, g.deepest + 2) - 4));
+      if (!w.empty(x, y) || !isFinite(costTo(map, x, y))) continue;
+      if (![x - 1, x, x + 1].every((cx) => w.solid(cx, y + 1))) continue;
       const cells = [[x + 1, y], [x + 1, y - 1], [x, y - 1], [x - 1, y - 1], [x - 1, y]];
-      const solid = cells.filter(([cx, cy]) => w.solid(cx, cy));
-      if (solid.length < 4 || cells.some(([cx, cy]) => w.solid(cx, cy) && !w.canDig(cx, cy, g.pickLevel))) continue;
-      if (cells.some(([cx, cy]) => w.oreAt(cx, cy))) continue;
+      if (cells.filter(([cx, cy]) => w.solid(cx, cy)).length < 4) continue;
+      if (cells.some(([cx, cy]) => w.solid(cx, cy) && !w.canDig(cx, cy, g.pickLevel))) continue;
+      if (cells.some(([cx, cy]) => w.oreAt(cx, cy) || w.flag(cx, cy, F_LADDER))) continue;
       if (w.emptyAround(x, y, 2) > 9) continue;
       if (!this.goTo('explore', x, y, {}, map)) continue;
-      for (const [cx, cy] of cells) this.path.push({ x: cx, y: cy });
+      this.path.push(
+        { x: x + 1, y }, { x: x + 1, y: y - 1, digOnly: true },
+        { x, y }, { x, y: y - 1, digOnly: true },
+        { x: x - 1, y }, { x: x - 1, y: y - 1, digOnly: true },
+      );
       this.task.x = x - 1;
       this.task.y = y;
       return true;
@@ -483,13 +543,13 @@ export class Dwarf {
   goRest(urgent) {
     const g = this.game;
     if (this.cy < 30 || (!urgent && this.cy < 45)) {
-      if (this.goTo('home', COTTAGE_X, -1, { noDig: true })) { this.say(pick(['Feierabend!', 'Gähn…', 'Ab ins Bett'])); return; }
+      if (this.goTo('home', COTTAGE_X, -1, { noDig: true })) { this.say({ icon: 'moon' }); return; }
     }
     // sleep where we are – but on solid ground, not on a ladder
     if (g.world.solid(this.cx, this.cy + 1)) { this.finish({ kind: 'sleep' }); return; }
     const wm = dijkstra(g.world, this.cx, this.cy, { noDig: true, maxCost: 30 });
     let best = null, bc = Infinity;
-    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+    for (let y = Math.max(0, this.cy - 20); y < Math.min(g.world.H, this.cy + 20); y++) for (let x = 0; x < W; x++) {
       const c = costTo(wm, x, y);
       if (c < bc && g.world.empty(x, y) && g.world.solid(x, y + 1)) { bc = c; best = [x, y]; }
     }
@@ -510,13 +570,13 @@ export class Dwarf {
       case 'sleep':
         this.state = 'sleep';
         this.timer = 6;
-        this.say('Zzz', 3);
+        this.say({ icon: 'zzz' }, 3);
         break;
       case 'feast':
         if (g.feast) {
           this.state = 'feast';
           this.facing = this.cx < g.feastCenter() ? 1 : -1;
-          this.say(pick(['Prost!', 'Hurra!', { icon: 'beer' }]));
+          this.say({ icon: 'beer' });
         }
         break;
       case 'craft':
@@ -524,7 +584,7 @@ export class Dwarf {
         this.timer = 16 + Math.random() * 10;
         this.swingT = 0;
         this.craftN = 0;
-        this.say(pick(['Steine klopfen!', 'Für die Händler!', 'Tock!']));
+        this.say({ icon: 'hammer' });
         break;
       case 'chat': {
         const o = g.dwarfs.find((d) => d.id === t.other);
@@ -542,7 +602,7 @@ export class Dwarf {
       }
       case 'wander':
         this.timer = 0.8 + Math.random() * 2;
-        if (Math.random() < 0.4) this.say(pick(['♪', '♫', 'Hmm…', 'Schön hier', { icon: 'gold' }]));
+        if (Math.random() < 0.3) this.say(pick(['♪', '♫', { icon: 'gold' }]));
         break;
       default:
         this.timer = 0.2 + Math.random() * 0.8;
@@ -551,16 +611,15 @@ export class Dwarf {
 
   think(dt) {
     if ((this.thinkT -= dt) > 0 || this.bubble) return;
-    this.thinkT = 9 + Math.random() * 16;
-    if (this.state === 'home' || this.state === 'feast') return;
-    if (this.state === 'sleep') { this.say('Zzz', 3); this.thinkT = 4; return; }
+    this.thinkT = 16 + Math.random() * 22;
+    if (this.state === 'home' || this.state === 'feast' || this.state === 'build') return;
+    if (this.state === 'sleep') { this.say({ icon: 'zzz' }, 3); this.thinkT = 5; return; }
     let pool;
-    if (this.state === 'dig') pool = ['Hau ruck!', 'Tock, tock', 'Puh…', '♪', 'Hepp!'];
-    else if (this.sack.length) pool = [{ icon: ORES[this.sack[this.sack.length - 1]].icon }, 'Schwer!', '♪'];
-    else if (this.energy < 30) pool = ['Gähn…', 'Müde…'];
-    else if (this.cy > 82) pool = ['So warm hier…', 'Es glüht!', '♪'];
-    else if (this.cy > 55) pool = ['Dunkel hier…', 'Echo!', '♫'];
-    else pool = ['♪', '♫', 'Hmm…', { icon: 'beer' }, { icon: 'gold' }, 'Hihi', 'Gold!', '❤'];
+    if (this.state === 'dig') pool = ['♪', '!'];
+    else if (this.sack.length) pool = [{ icon: ORES[this.sack[this.sack.length - 1][0]].icon }];
+    else if (this.energy < 30) pool = [{ icon: 'zzz' }];
+    else pool = ['♪', '♫', { icon: 'beer' }, { icon: 'gold' }, { icon: 'heart' }, { icon: 'diamond' }];
     this.say(pick(pool));
   }
+
 }

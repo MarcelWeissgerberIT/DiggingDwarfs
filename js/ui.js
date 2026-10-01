@@ -1,15 +1,18 @@
-// DOM user interface: HUD, ticker, dwarf card, sheets (workshop, treasury, menu).
-import { ORES, PICKS, ICON, HORN_MAX, MAX_DWARFS, ORE_HEART } from './config.js';
+// DOM user interface: icons first, as few words as possible.
+import { ORES, ORE_HEART, HORN_MAX, MAX_DWARFS, pickInfo } from './config.js';
+import { iconSVG } from './icons.js';
 
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmt = (n) => Math.round(n).toLocaleString('de-DE');
 
-export function iconHTML(name, cls = '') {
-  const [r, c] = ICON[name] || ICON.gold;
-  return `<i class="ico ${cls}" style="background-position:${c * 33.3333}% ${r * 33.3333}%"></i>`;
-}
-export function portraitHTML(variant, cls = '') {
-  return `<i class="portrait ${cls}" style="background-position:0% ${variant * 33.3333}%"></i>`;
+export const portraitHTML = (variant, cls = '') =>
+  `<i class="portrait ${cls}" style="background-position:0% ${variant * 33.3333}%"></i>`;
+
+function setIcon(el, name) {
+  if (el.dataset.cur === name) return;
+  el.dataset.cur = name;
+  el.innerHTML = iconSVG(name);
 }
 
 export class UI {
@@ -18,12 +21,14 @@ export class UI {
     this.mode = null; // 'flag'
     this.tickerItems = [];
     this.goldShown = 0;
+    document.querySelectorAll('[data-icon]').forEach((el) => setIcon(el, el.dataset.icon));
     $('#btn-flag').addEventListener('click', () => this.toggleFlagMode());
     $('#btn-feast').addEventListener('click', () => this.feast());
     $('#btn-shop').addEventListener('click', () => this.openShop());
     $('#btn-treasury').addEventListener('click', () => this.openTreasury('items'));
     $('#btn-menu').addEventListener('click', () => this.openMenu());
     $('#btn-speed').addEventListener('click', () => this.cycleSpeed());
+    $('#btn-sound').addEventListener('click', () => { this.app.audio.toggleMute(); this.app.audio.unlock(); });
     $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') this.closeSheet(); });
     $('#card-close').addEventListener('click', () => this.select(null));
     $('#card-follow').addEventListener('click', () => this.toggleFollow());
@@ -36,45 +41,38 @@ export class UI {
     const g = this.game;
     this.goldShown += (g.gold - this.goldShown) * Math.min(1, dt * 6);
     if (Math.abs(g.gold - this.goldShown) < 0.5) this.goldShown = g.gold;
-    $('#gold-val').textContent = Math.round(this.goldShown).toLocaleString('de-DE');
+    $('#gold-val').textContent = fmt(this.goldShown);
     $('#pop-val').textContent = g.dwarfs.length;
-    $('#day-val').textContent = `Tag ${g.day}`;
-    $('#clock-ico').textContent = g.isNight() ? '🌙' : '☀️';
-    $('#depth-val').textContent = `${g.deepest * 2} m`;
-    // horns
+    $('#day-val').textContent = g.day;
+    setIcon($('#clock-ico'), g.isNight() ? 'moon' : 'sun');
+    setIcon($('#btn-sound span'), this.app.audio.muted ? 'mute' : 'sound');
     const full = Math.floor(g.horns);
     const frac = g.horns - full;
     const horns = $('#horns').children;
     for (let i = 0; i < HORN_MAX; i++) {
-      const el = horns[i];
-      const fill = i < full ? 1 : i === full ? frac : 0;
-      el.style.setProperty('--fill', fill.toFixed(3));
-      el.classList.toggle('ready', i < full);
+      horns[i].style.setProperty('--fill', (i < full ? 1 : i === full ? frac : 0).toFixed(3));
+      horns[i].classList.toggle('ready', i < full);
     }
     $('#btn-flag').classList.toggle('active', this.mode === 'flag');
     $('#btn-flag').classList.toggle('disabled', g.horns < 1);
     $('#btn-feast').classList.toggle('disabled', g.horns < 1 || !!g.feast);
     $('#btn-feast').classList.toggle('active', !!g.feast);
-    const canBuy = (g.pickLevel < 4 && g.gold >= PICKS[g.pickLevel + 1].cost) ||
-      (g.dwarfs.length < MAX_DWARFS && g.gold >= g.recruitCost());
-    $('#btn-shop').classList.toggle('badge', canBuy);
+    const canBuy = g.gold >= pickInfo(g.pickLevel + 1).cost || (g.dwarfs.length < MAX_DWARFS && g.gold >= g.recruitCost());
+    $('#btn-shop').classList.toggle('badge', canBuy || g.stuck);
     $('#buff').hidden = !(g.buffT > 0);
-    if (g.buffT > 0) $('#buff-val').textContent = `${Math.ceil(g.buffT)}s`;
+    if (g.buffT > 0) $('#buff-val').textContent = Math.ceil(g.buffT);
     this.updateCard();
     this.updateTicker(dt);
   }
 
-  // ---------- ticker ----------
-  ticker(msg, icon, important) {
+  // ---------- ticker: icon + a word or two ----------
+  ticker(msg, icon, big) {
     const el = document.createElement('div');
-    el.className = 'tick' + (important ? ' important' : '');
-    el.innerHTML = (icon ? iconHTML(icon) : '') + `<span>${esc(msg)}</span>`;
+    el.className = 'tick' + (big ? ' big' : '');
+    el.innerHTML = (icon ? iconSVG(icon) : '') + `<span>${esc(msg)}</span>`;
     $('#ticker').prepend(el);
-    this.tickerItems.unshift({ el, t: important ? 6 : 4.2 });
-    while (this.tickerItems.length > 3) {
-      const old = this.tickerItems.pop();
-      old.el.remove();
-    }
+    this.tickerItems.unshift({ el, t: big ? 4 : 3 });
+    while (this.tickerItems.length > 2) this.tickerItems.pop().el.remove();
   }
 
   updateTicker(dt) {
@@ -88,7 +86,7 @@ export class UI {
     });
   }
 
-  toast(msg, ms = 2400) {
+  toast(msg, ms = 1800) {
     const t = $('#toast');
     t.textContent = msg;
     t.classList.add('show');
@@ -98,19 +96,17 @@ export class UI {
 
   // ---------- commands ----------
   toggleFlagMode() {
-    this.app.audio.play('tap');
     if (this.mode === 'flag') { this.mode = null; $('#hint').hidden = true; return; }
-    if (this.game.horns < 1) { this.toast('Kein Befehl übrig – das Horn erholt sich gerade.'); this.app.audio.play('error'); return; }
+    if (this.game.horns < 1) { this.toast('Kein Befehl übrig'); return; }
     this.mode = 'flag';
     $('#hint').hidden = false;
-    $('#hint').innerHTML = `${iconHTML('flag')} Tippe auf eine Stelle im Boden – ein Zwerg gräbt dorthin.`;
   }
 
   feast() {
     const r = this.game.startFeast();
-    if (!r.ok) { this.toast(r.msg); this.app.audio.play('error'); return; }
-    this.app.renderer.centerOn(9, -1);
+    if (!r.ok) { this.toast(r.msg); return; }
     this.app.renderer.follow = null;
+    this.app.renderer.centerOn(9, -0.5);
   }
 
   tapWorld(cssX, cssY) {
@@ -118,14 +114,12 @@ export class UI {
     if (this.mode === 'flag') {
       const c = r.cellAt(cssX, cssY);
       const res = this.game.placeFlag(c.x, c.y);
-      if (!res.ok) { this.toast(res.msg); this.app.audio.play('error'); return; }
+      if (!res.ok) { this.toast(res.msg); return; }
       this.mode = null;
       $('#hint').hidden = true;
       return;
     }
-    const d = r.dwarfAt(cssX, cssY);
-    this.select(d);
-    if (d) this.app.audio.play('tap');
+    this.select(r.dwarfAt(cssX, cssY));
   }
 
   // ---------- dwarf card ----------
@@ -152,20 +146,24 @@ export class UI {
     this.cardT = (this.cardT || 0) - 1;
     if (!force && this.cardT > 0) return;
     this.cardT = 10;
-    $('#card-act').textContent = d.activity();
+    const [icon, label] = d.activity();
+    const key = icon + label;
+    if ($('#card-act').dataset.k !== key) {
+      $('#card-act').dataset.k = key;
+      $('#card-act').innerHTML = iconSVG(icon) + `<span>${esc(label)}</span>`;
+    }
     $('#card-energy').style.width = `${Math.round(d.energy)}%`;
     $('#card-energy').classList.toggle('low', d.energy < 25);
-    const best = d.best ? `${iconHTML(ORES[d.best].icon, 'sm')} ${ORES[d.best].name}` : '—';
-    $('#card-stats').innerHTML =
-      `<span>⛏ ${d.dug} Felder</span><span>💎 ${d.finds} Funde</span><span>Bester Fund: ${best}</span><span>Mag: ${esc(d.likes)}</span>`;
-    $('#card-sack').innerHTML = d.sack.length ? d.sack.map((o) => iconHTML(ORES[o].icon, 'sm')).join('') : '<em>leerer Sack</em>';
+    const sackKey = d.sack.map((s) => s[0]).join(',');
+    if ($('#card-sack').dataset.k !== sackKey) {
+      $('#card-sack').dataset.k = sackKey;
+      $('#card-sack').innerHTML = d.sack.map(([o]) => iconSVG(ORES[o].icon)).join('');
+    }
     $('#card-follow').classList.toggle('active', this.app.renderer.follow === d);
-    $('#card-follow').textContent = this.app.renderer.follow === d ? '👁 Folge ich' : '👁 Folgen';
   }
 
   // ---------- sheets ----------
   openSheet(html) {
-    this.app.audio.play('tap');
     $('#sheet-body').innerHTML = html;
     $('#sheet').hidden = false;
     requestAnimationFrame(() => $('#sheet').classList.add('open'));
@@ -173,31 +171,31 @@ export class UI {
   closeSheet() {
     $('#sheet').classList.remove('open');
     setTimeout(() => { if (!$('#sheet').classList.contains('open')) $('#sheet').hidden = true; }, 250);
-    this.sheetRefresh = null;
+  }
+
+  priceBtn(act, cost, disabled) {
+    return `<button class="buy" data-act="${act}" ${disabled ? 'disabled' : ''}>${iconSVG('coin')}<span>${fmt(cost)}</span></button>`;
   }
 
   openShop() {
     const render = () => {
       const g = this.game;
       const rc = g.recruitCost();
-      const full = g.dwarfs.length >= 12;
-      const next = g.pickLevel < 4 ? PICKS[g.pickLevel + 1] : null;
+      const full = g.dwarfs.length >= MAX_DWARFS;
+      const next = pickInfo(g.pickLevel + 1);
       return `
-      <h2>${iconHTML('pick')} Werkstatt</h2>
-      <p class="sub">Du hast <b>${g.gold.toLocaleString('de-DE')}</b> ${iconHTML('gold', 'sm')} Gold</p>
+      <div class="sheet-head">${iconSVG('hammer')}<h2>Werkstatt</h2><span class="sheet-gold">${iconSVG('coin')}${fmt(g.gold)}</span></div>
       <div class="shop-card">
-        ${portraitHTML((g.dwarfs.length) % 4, 'big')}
-        <div class="txt"><h3>Neuer Zwerg</h3><p>${full ? 'Die Farm ist voll belegt.' : `Ein weiterer fleißiger Gräber. (${g.dwarfs.length}/12)`}</p></div>
-        <button class="buy" data-act="recruit" ${full || g.gold < rc ? 'disabled' : ''}>${full ? 'voll' : `${rc} ${iconHTML('gold', 'sm')}`}</button>
+        ${portraitHTML(g.dwarfs.length % 4, 'big')}
+        <div class="txt"><b>+1 Zwerg</b><small>${g.dwarfs.length} / ${MAX_DWARFS}</small></div>
+        ${full ? '<span class="done">voll</span>' : this.priceBtn('recruit', rc, g.gold < rc)}
       </div>
-      <div class="shop-card">
-        ${iconHTML('pick', 'big')}
-        <div class="txt"><h3>${next ? next.name : PICKS[4].name}</h3><p>${next ? `Bessere Spitzhacken für alle: ${next.desc} und gräbt schneller.` : 'Die Zwerge haben die beste Spitzhacke.'}</p>
-        <p class="tiny">Aktuell: ${PICKS[g.pickLevel].name}</p></div>
-        <button class="buy" data-act="pick" ${!next || g.gold < next.cost ? 'disabled' : ''}>${next ? `${next.cost} ${iconHTML('gold', 'sm')}` : '✓'}</button>
+      <div class="shop-card ${g.stuck ? 'glow' : ''}">
+        <span class="big-ic">${iconSVG('pick')}</span>
+        <div class="txt"><b>${esc(next.name)}</b><small><i class="swatch" style="background-image:url(assets/tex/${next.tex}.jpg)"></i>${esc(next.unlocks)}</small></div>
+        ${this.priceBtn('pick', next.cost, g.gold < next.cost)}
       </div>
-      <p class="tiny center">Gold bekommst du, wenn die Zwerge Schätze zur Lore an der Oberfläche bringen.</p>
-      <button class="close" data-act="close">Schließen</button>`;
+      <button class="close" data-act="close">${iconSVG('close')}</button>`;
     };
     this.openSheet(render());
     this.bindSheet(render);
@@ -209,18 +207,17 @@ export class UI {
       const b = e.target.closest('[data-act]');
       if (!b) return;
       const act = b.dataset.act;
+      const a = this.app.audio;
       if (act === 'close') return this.closeSheet();
-      let res;
-      if (act === 'recruit') res = this.game.recruit();
-      if (act === 'pick') res = this.game.upgradePick();
       if (act === 'tab') return this.openTreasury(b.dataset.tab);
-      if (act === 'music') { this.app.audio.setMusic(!this.app.audio.musicOn); body.innerHTML = render(); return; }
-      if (act === 'sfx') { this.app.audio.setSfx(!this.app.audio.sfxOn); body.innerHTML = render(); return; }
+      if (act === 'music') { a.setMusic(!a.musicOn); a.unlock(); body.innerHTML = render(); return; }
+      if (act === 'sfx') { a.setSfx(!a.sfxOn); body.innerHTML = render(); return; }
       if (act === 'help') return this.openHelp();
       if (act === 'new') {
         if (b.dataset.confirm) { this.closeSheet(); this.app.newGame(); return; }
         b.dataset.confirm = '1';
-        b.textContent = 'Wirklich? Alles geht verloren!';
+        b.classList.add('confirm');
+        b.querySelector('b').textContent = 'Sicher?';
         return;
       }
       if (act === 'dwarf') {
@@ -229,8 +226,11 @@ export class UI {
         if (d) { this.select(d); this.app.renderer.follow = d; if (this.app.renderer.cam.T < 50) this.app.renderer.cam.T = 56; }
         return;
       }
+      let res;
+      if (act === 'recruit') res = this.game.recruit();
+      if (act === 'pick') res = this.game.upgradePick();
       if (res) {
-        if (!res.ok) { this.toast(res.msg); this.app.audio.play('error'); } else this.toast('Erledigt!');
+        if (!res.ok) this.toast(res.msg);
         body.innerHTML = render();
       }
     };
@@ -240,27 +240,26 @@ export class UI {
     const render = () => {
       const g = this.game;
       const tabs = `<div class="tabs">
-        <button data-act="tab" data-tab="items" class="${tab === 'items' ? 'on' : ''}">Schätze</button>
-        <button data-act="tab" data-tab="colony" class="${tab === 'colony' ? 'on' : ''}">Kolonie</button>
-        <button data-act="tab" data-tab="log" class="${tab === 'log' ? 'on' : ''}">Chronik</button></div>`;
+        <button data-act="tab" data-tab="items" class="${tab === 'items' ? 'on' : ''}" aria-label="Schätze">${iconSVG('diamond')}</button>
+        <button data-act="tab" data-tab="colony" class="${tab === 'colony' ? 'on' : ''}" aria-label="Zwerge">${iconSVG('dwarf')}</button></div>`;
       let body = '';
       if (tab === 'items') {
-        const found = ORES.filter((o, i) => o && g.collection[i]).length;
-        body = `<p class="sub">${found} von ${ORES.length - 1} Schatzarten entdeckt · ${g.totalGold.toLocaleString('de-DE')} Gold gesammelt</p><div class="grid">` +
-          ORES.map((o, i) => {
-            if (!o) return '';
-            const n = g.collection[i] || 0;
-            if (!n) return `<div class="cell unknown">${iconHTML(i === ORE_HEART ? 'diamond' : o.icon, 'big')}<b>???</b><small>${i === ORE_HEART ? 'ganz tief unten…' : '&nbsp;'}</small></div>`;
-            return `<div class="cell ${i === ORE_HEART ? 'heart' : ''}">${iconHTML(o.icon, 'big')}<b>${o.name}</b><small>×${n} · ${o.value} Gold</small></div>`;
-          }).join('') + '</div>';
-      } else if (tab === 'colony') {
-        body = `<p class="sub">Tiefster Stollen: ${g.deepest * 2} m · Spitzhacke: ${PICKS[g.pickLevel].name}</p><div class="list">` +
-          g.dwarfs.map((d) => `<button class="row" data-act="dwarf" data-id="${d.id}">${portraitHTML(d.variant)}<span><b>${esc(d.name)}</b><small>${esc(d.activity())}</small></span><span class="nums">⛏ ${d.dug}<br>💎 ${d.finds}</span></button>`).join('') +
-          '</div>';
+        const cells = ORES.map((o, i) => {
+          if (!o) return '';
+          const n = g.collection[i] || 0;
+          return `<div class="cell ${n ? '' : 'unknown'} ${i === ORE_HEART ? 'heart' : ''}">${iconSVG(o.icon)}<b>${n ? fmt(n) : '?'}</b></div>`;
+        });
+        const dinos = g.collection.dino || 0;
+        cells.push(`<div class="cell ${dinos ? '' : 'unknown'}">${iconSVG('bone')}<b>${dinos || '?'}</b></div>`);
+        body = `<div class="stats"><span>${iconSVG('coin')}${fmt(g.totalGold)}</span><span>${iconSVG('layers')}${g.deepest * 2} m</span></div>
+          <div class="grid">${cells.join('')}</div>`;
       } else {
-        body = '<div class="log">' + (g.log.length ? g.log.map((l) => `<div class="logrow">${iconHTML(l.icon || 'pick', 'sm')}<span><small>Tag ${l.day}</small> ${esc(l.msg)}</span></div>`).join('') : '<p>Noch nichts passiert.</p>') + '</div>';
+        body = '<div class="list">' + g.dwarfs.map((d) => {
+          const [icon] = d.activity();
+          return `<button class="row" data-act="dwarf" data-id="${d.id}">${portraitHTML(d.variant)}<b>${esc(d.name)}</b>${iconSVG(icon)}<span class="nums">${d.finds}</span></button>`;
+        }).join('') + '</div>';
       }
-      return `<h2>${iconHTML('chest')} Schatzkammer</h2>${tabs}${body}<button class="close" data-act="close">Schließen</button>`;
+      return `<div class="sheet-head">${iconSVG('chest')}<h2>Schätze</h2></div>${tabs}${body}<button class="close" data-act="close">${iconSVG('close')}</button>`;
     };
     if ($('#sheet').hidden) this.openSheet(render()); else $('#sheet-body').innerHTML = render();
     this.bindSheet(render);
@@ -269,34 +268,29 @@ export class UI {
   openMenu() {
     const render = () => {
       const a = this.app.audio;
-      return `<h2>⚙️ Menü</h2>
-      <div class="list">
-        <button class="row" data-act="music"><span>🎵</span><span><b>Musik</b><small>${a.musicOn ? 'an' : 'aus'}</small></span></button>
-        <button class="row" data-act="sfx"><span>🔔</span><span><b>Geräusche</b><small>${a.sfxOn ? 'an' : 'aus'}</small></span></button>
-        <button class="row" data-act="help"><span>❓</span><span><b>Anleitung</b><small>So funktioniert die Zwergenfarm</small></span></button>
-        <button class="row danger" data-act="new"><span>🌱</span><span><b>Neues Spiel</b><small>Neue Farm mit neuen Zwergen</small></span></button>
+      return `<div class="list">
+        <button class="row" data-act="music">${iconSVG('note')}<b>Musik</b><span class="toggle ${a.musicOn ? 'on' : ''}"></span></button>
+        <button class="row" data-act="sfx">${iconSVG('sound')}<b>Geräusche</b><span class="toggle ${a.sfxOn ? 'on' : ''}"></span></button>
+        <button class="row" data-act="help">${iconSVG('question')}<b>Hilfe</b></button>
+        <button class="row danger" data-act="new">${iconSVG('seed')}<b>Neue Farm</b></button>
       </div>
-      <p class="tiny center">Spielstand wird automatisch gespeichert.<br>Grafiken erstellt mit OpenArt.</p>
-      <button class="close" data-act="close">Schließen</button>`;
+      <button class="close" data-act="close">${iconSVG('close')}</button>`;
     };
     this.openSheet(render());
     this.bindSheet(render);
   }
 
   openHelp() {
-    const html = `<h2>❓ Die Zwergenfarm</h2>
-      <div class="help">
-        <p>👀 <b>Du bist Beobachter.</b> Die Zwerge graben ganz von allein Stollen durch die Erde – wie Ameisen in einer Ameisenfarm. Sie suchen Gold, Kristalle und Diamanten und tragen alles zur Lore an der Oberfläche.</p>
-        <p>📯 <b>Nur wenige Befehle.</b> Du hast höchstens 3 Hornstöße. Sie laden sich langsam wieder auf.</p>
-        <p>${iconHTML('flag', 'sm')} <b>Graben:</b> Tippe danach auf eine Stelle im Boden – der nächste Zwerg gräbt dorthin.</p>
-        <p>${iconHTML('beer', 'sm')} <b>Festmahl:</b> Alle Zwerge kommen an die Tafel, erholen sich und graben danach 2 Minuten schneller.</p>
-        <p>${iconHTML('pick', 'sm')} <b>Werkstatt:</b> Mit Gold neue Zwerge anwerben und bessere Spitzhacken kaufen. Tiefere Gesteine brauchen bessere Hacken.</p>
-        <p>✨ Glitzert es irgendwo im Gestein? Dort ist etwas verborgen…</p>
-        <p>🌙 Nachts gehen müde Zwerge schlafen. Tippe einen Zwerg an, um ihm zu folgen.</p>
-        <p>💎 Ganz unten, im Glutfels, soll das legendäre <b>Herz des Berges</b> liegen.</p>
-        <p>✋ Ziehen = bewegen · Zwei Finger / Mausrad = zoomen · ⏩ = Zeitraffer</p>
+    const row = (ic, t) => `<div class="help-row">${iconSVG(ic)}<span>${t}</span></div>`;
+    const html = `<div class="help">
+        ${row('dwarf', 'Zwerge graben von selbst')}
+        ${row('flag', 'Tippen = Grabziel')}
+        ${row('beer', 'Festmahl = schneller graben')}
+        ${row('horn', 'Max. 3 Befehle, laden nach')}
+        ${row('hammer', 'Gold → Zwerge & Hacken')}
+        ${row('bone', 'Dinos im Gestein finden')}
       </div>
-      <button class="close primary" data-act="close">Los geht's!</button>`;
+      <button class="close primary" data-act="close">Los!</button>`;
     this.openSheet(html);
     this.bindSheet(() => html);
   }
@@ -304,16 +298,13 @@ export class UI {
   cycleSpeed() {
     const s = this.app.speed === 1 ? 2 : this.app.speed === 2 ? 4 : 1;
     this.app.setSpeed(s);
-    $('#btn-speed').textContent = s === 1 ? '▶︎ 1×' : s === 2 ? '⏩ 2×' : '⏩ 4×';
-    this.app.audio.play('tap');
+    setIcon($('#btn-speed span'), s === 1 ? 'play' : s === 2 ? 'fast' : 'faster');
   }
 
   showHeart(d) {
-    this.openSheet(`<h2>💎 Das Herz des Berges!</h2>
-      <div class="help center"><div class="heart-big">${iconHTML('diamond', 'huge')}</div>
-      <p><b>${esc(d.name)}</b> hat tief unten im Glutfels das legendäre Herz des Berges gefunden!</p>
-      <p>Die ganze Kolonie feiert. Deine Zwergenfarm ist nun eine Legende – aber gegraben wird natürlich weiter.</p></div>
-      <button class="close primary" data-act="close">Hurra!</button>`);
+    this.openSheet(`<div class="help center"><div class="heart-big">${iconSVG('diamond')}</div>
+      <h2>Herz des Berges!</h2><p>${esc(d.name)}</p></div>
+      <button class="close primary" data-act="close">${iconSVG('star')}</button>`);
     this.bindSheet(() => '');
   }
 }

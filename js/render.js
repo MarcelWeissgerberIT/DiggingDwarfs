@@ -6,14 +6,14 @@
 // Faces are painted back to front: back walls, tunnel floors & walls (bottom
 // rows first), dwarfs, then the front faces of the remaining earth.
 import {
-  W, H, SLAB, ISO, MAT, MATS, ORES, ICON, ORE_HEART, ENTRANCE_X, STASH_X, COTTAGE_X, FEAST_X, NIGHT_START,
+  W, SLAB, ISO, MAT, mat, ORES, DINOS, ORE_HEART, ENTRANCE_X, STASH_X, COTTAGE_X, FEAST_X, NIGHT_START,
 } from './config.js';
-import { F_REV, F_LAMP, F_MUSH, F_CAVE } from './world.js';
+import { F_REV, F_LAMP, F_MUSH, F_CAVE, F_LADDER, F_BRIDGE } from './world.js';
+import { drawIcon } from './icons.js';
 import { hash2, clamp, lerp } from './rng.js';
 
 const TX = 64;            // texels per cell (textures are 256px = 4 cells)
 const SPRITE = 256;       // dwarf atlas cell size
-const ICONPX = 160;       // item atlas cell size
 const HALF = SLAB / 2;
 
 const SKY = [
@@ -97,11 +97,19 @@ export class Renderer {
     if (instant) { this.cam.x = ix; this.cam.y = iy; } else { this.camTarget = [ix, iy]; }
   }
 
+  // keep the screen filled with earth: no peeking past the frame or below the dug rows
   clampCam() {
     const c = this.cam;
-    c.T = clamp(c.T, 16, 120);
-    c.x = clamp(c.x, -0.5, W * ISO + 0.2);
-    c.y = clamp(c.y, -5, W * 0.5 + H + 0.5);
+    c.T = clamp(c.T, Math.max(16, this.cssW / ((W + 0.4) * ISO)), 120);
+    const hw = this.cssW / 2 / c.T, hh = this.cssH / 2 / c.T;
+    const ixMin = -SLAB * ISO - 0.25, ixMax = (W - SLAB) * ISO + 0.25;
+    c.x = ixMax - ixMin < hw * 2 ? (ixMin + ixMax) / 2 : clamp(c.x, ixMin + hw, ixMax - hw);
+    const xLeft = (c.x - hw) / ISO + SLAB;
+    const g = this.game;
+    const maxD = Math.min(g.world.H - 2, g.deepest + 30);
+    const yMin = -6 + xLeft * 0.5 + hh;
+    const yMax = maxD + (xLeft + SLAB) * 0.5 - hh;
+    c.y = yMax < yMin ? yMin : clamp(c.y, yMin, yMax);
   }
 
   cellAt(cssX, cssY) {
@@ -127,8 +135,8 @@ export class Renderer {
   }
 
   // ---------- effects ----------
-  crumbs(x, y, mat, n = 5) {
-    const col = MATS[mat]?.crumb || '#776';
+  crumbs(x, y, m, n = 5) {
+    const col = mat(m)?.crumb || '#776';
     const [ix, iy] = this.isoOf(x + 0.5, y + 0.5, SLAB * 0.8);
     for (let i = 0; i < n; i++) {
       this.particles.push({
@@ -194,7 +202,7 @@ export class Renderer {
     }
     return p;
   }
-  matKey(m) { return m === MAT.BEDROCK ? 'magma' : MATS[m].tex; }
+  matKey(m) { return mat(m).tex || 'stone'; }
 
   setFront(unit = TX) {
     const s = this.T / unit;
@@ -247,10 +255,12 @@ export class Renderer {
     this.drawBackWalls();
     this.drawInterior();
     this.drawLadders();
+    this.drawBridges();
     this.drawCaveDecor();
     this.drawEntities(false);
     this.drawFront();
     this.drawOres();
+    this.drawDinos();
     this.drawParticles(['crumb']);
     this.drawGlass();
     this.drawFrame();
@@ -267,6 +277,7 @@ export class Renderer {
     const iy0 = -this.oy / T, iy1 = (this.cv.height - this.oy) / T;
     this.x0 = clamp(Math.floor(ix0 / ISO) - 1, 0, W - 1);
     this.x1 = clamp(Math.ceil(ix1 / ISO + SLAB) + 1, 0, W - 1);
+    const H = this.game.world.H;
     this.y0 = clamp(Math.floor(iy0 - (this.x1 + 1 + SLAB) * 0.5) - 2, -1, H - 1);
     this.y1 = clamp(Math.ceil(iy1 - this.x0 * 0.5) + 2, -1, H - 1);
     this.iyView = [iy0, iy1];
@@ -389,7 +400,7 @@ export class Renderer {
     const w = this.game.world, ctx = this.ctx;
     for (let y = this.y1; y >= this.y0; y--) {
       // floors = top faces of the solid cells below empty cells
-      if (y + 1 < H) {
+      if (y + 1 < w.H) {
         const groups = new Map();
         for (let x = this.x0; x <= this.x1; x++) {
           if (!w.empty(x, y) || !w.solid(x, y + 1)) continue;
@@ -424,38 +435,51 @@ export class Renderer {
     this.identity();
   }
 
+  // ladders the dwarfs have built (a dwarf only climbs where a ladder stands)
   drawLadders() {
     const w = this.game.world, ctx = this.ctx;
     const segs = [];
-    for (let y = Math.max(-1, this.y0); y <= this.y1; y++) {
+    for (let y = Math.max(0, this.y0); y <= this.y1; y++) {
       for (let x = this.x0; x <= this.x1; x++) {
-        if (y + 1 < H && w.empty(x, y) && w.empty(x, y + 1) && (w.empty(x, y - 1) || w.empty(x, y + 2) || y === -1)) segs.push(x, y);
+        if (!w.flag(x, y, F_LADDER)) continue;
+        const top = y === 0 ? -0.7 : w.flag(x, y - 1, F_LADDER) ? y : y + 0.08;
+        const bot = w.flag(x, y + 1, F_LADDER) ? y + 1 : y + 1;
+        segs.push(x, top, bot);
       }
     }
     if (!segs.length) return;
-    this.setBack(1, 0.1);
+    this.setBack(1, 0.12);
     const draw = (lw, col) => {
       ctx.lineWidth = lw;
       ctx.strokeStyle = col;
       ctx.beginPath();
-      for (let i = 0; i < segs.length; i += 2) {
-        const x = segs[i], y = segs[i + 1];
-        const top = y === -1 ? -0.75 : y + 0.1;
-        const bot = y + 2;
-        ctx.moveTo(x + 0.34, top); ctx.lineTo(x + 0.34, bot);
-        ctx.moveTo(x + 0.66, top); ctx.lineTo(x + 0.66, bot);
-        for (let r = Math.ceil(top / 0.28) * 0.28; r < bot - 0.05; r += 0.28) {
-          ctx.moveTo(x + 0.34, r); ctx.lineTo(x + 0.66, r);
+      for (let i = 0; i < segs.length; i += 3) {
+        const x = segs[i], top = segs[i + 1], bot = segs[i + 2];
+        ctx.moveTo(x + 0.3, top); ctx.lineTo(x + 0.3, bot);
+        ctx.moveTo(x + 0.7, top); ctx.lineTo(x + 0.7, bot);
+        for (let r = Math.ceil((top + 0.05) / 0.25) * 0.25; r < bot - 0.02; r += 0.25) {
+          ctx.moveTo(x + 0.3, r); ctx.lineTo(x + 0.7, r);
         }
       }
       ctx.stroke();
     };
     ctx.lineCap = 'round';
-    ctx.globalAlpha = 0.85;
-    draw(0.075, '#2e1c10');
-    draw(0.04, '#a8743f');
-    ctx.globalAlpha = 1;
+    draw(0.09, '#2e1c10');
+    draw(0.05, '#b98049');
     this.identity();
+  }
+
+  // plank bridges over shafts and holes
+  drawBridges() {
+    const w = this.game.world;
+    const cols = { front: '#8a5a32', top: '#c99559', side: '#6e4626' };
+    for (let y = Math.max(0, this.y0); y <= this.y1; y++) {
+      for (let x = this.x0; x <= this.x1; x++) {
+        if (!w.flag(x, y, F_BRIDGE)) continue;
+        const z0 = w.flag(x, y, F_LADDER) ? SLAB * 0.45 : 0.04;
+        this.box(x - 0.04, x + 1.04, y + 0.93, y + 1.03, z0, SLAB - 0.03, cols, ['top', 'front']);
+      }
+    }
   }
 
   drawCaveDecor() {
@@ -485,11 +509,8 @@ export class Renderer {
     }
   }
 
-  icon(name, cx, cy, size, alpha = 1) {
-    const [r, c] = ICON[name];
-    if (alpha !== 1) this.ctx.globalAlpha = alpha;
-    this.ctx.drawImage(this.a.img.items, c * ICONPX, r * ICONPX, ICONPX, ICONPX, cx - size / 2, cy - size / 2, size, size);
-    if (alpha !== 1) this.ctx.globalAlpha = 1;
+  icon(name, cx, cy, size, rot = 0) {
+    drawIcon(this.ctx, name, cx, cy, size, rot);
   }
 
   drawDwarf(d) {
@@ -499,15 +520,17 @@ export class Renderer {
     let [sx, sy] = this.proj(d.x + fx, d.y, Z);
     if (d.alpha <= 0.01) return;
     const w = this.game.world;
-    const onLadder = d.state === 'walk' && d.move && d.move.y !== d.cy;
-    const grounded = !onLadder && w.solid(Math.floor(d.x), Math.round(d.y));
+    const onLadder = (d.state === 'walk' && d.move && d.move.y !== d.cy) ||
+      (d.state !== 'walk' && w.flag(d.cx, d.cy, F_LADDER) && !w.solid(d.cx, d.cy + 1));
+    const grounded = !onLadder && (w.solid(Math.floor(d.x), Math.round(d.y)) || w.flag(Math.floor(d.x), Math.round(d.y) - 1, F_BRIDGE));
     let frame = 0, rot = 0, bob = 0, sxs = 1, sys = 1;
     const t = d.anim;
-    if (d.state === 'dig' || d.state === 'craft') {
+    if (d.state === 'build') this.drawBuildGhost(d);
+    if (d.state === 'dig' || d.state === 'craft' || d.state === 'build') {
       const ph = d.swingT / 0.55;
       frame = ph < 0.62 ? 2 : 0;
       rot = ph < 0.62 ? -0.05 * ph : 0.22 - (ph - 0.62) * 0.4;
-      const dy = d.state === 'craft' ? 1 : d.digCell.y - d.cy;
+      const dy = d.state === 'craft' ? 1 : d.state === 'build' ? 0 : d.digCell.y - d.cy;
       if (dy > 0) rot += 0.15; else if (dy < 0) rot -= 0.25;
       if (ph > 0.62 && ph < 0.75) { sys = 0.94; sxs = 1.05; }
     } else if (d.state === 'walk') {
@@ -565,6 +588,33 @@ export class Renderer {
     d._sx = sx; d._sy = sy + bob;
   }
 
+  // the ladder or plank a dwarf is hammering together, fading in as it grows
+  drawBuildGhost(d) {
+    const b = d.build;
+    if (!b) return;
+    const ctx = this.ctx;
+    const prog = 1 - Math.max(0, d.timer) / b.total;
+    ctx.globalAlpha = 0.25 + prog * 0.6;
+    if (b.kind === 'bridge') {
+      const cols = { front: '#8a5a32', top: '#c99559', side: '#6e4626' };
+      this.box(b.x - 0.04, b.x - 0.04 + 1.08 * prog, b.y + 0.93, b.y + 1.03, 0.04, SLAB - 0.03, cols, ['top', 'front']);
+    } else {
+      this.setBack(1, 0.12);
+      ctx.lineCap = 'round';
+      const top = Math.min(b.y, b.fy), bot = Math.max(b.y, b.fy) + 1;
+      const end = top + (bot - top) * prog;
+      for (const [lw, col] of [[0.09, '#2e1c10'], [0.05, '#b98049']]) {
+        ctx.lineWidth = lw; ctx.strokeStyle = col; ctx.beginPath();
+        ctx.moveTo(b.x + 0.3, top); ctx.lineTo(b.x + 0.3, end);
+        ctx.moveTo(b.x + 0.7, top); ctx.lineTo(b.x + 0.7, end);
+        for (let r = top + 0.2; r < end; r += 0.25) { ctx.moveTo(b.x + 0.3, r); ctx.lineTo(b.x + 0.7, r); }
+        ctx.stroke();
+      }
+      this.identity();
+    }
+    ctx.globalAlpha = 1;
+  }
+
   drawEntities(surface) {
     const list = this.game.dwarfs.filter((d) => (surface ? d.y <= 0.05 : d.y > 0.05) && d.alpha > 0.01);
     list.sort((a, b) => (a.x * 0.5 + a.y) - (b.x * 0.5 + b.y));
@@ -580,11 +630,11 @@ export class Renderer {
       for (let x = this.x0; x <= this.x1; x++) {
         if (!w.solid(x, y)) continue;
         const m = w.get(x, y);
-        const key = m === MAT.BEDROCK ? 'bedrock' : this.matKey(m);
+        const key = this.matKey(m);
         if (!groups.has(key)) groups.set(key, []);
         groups.get(key).push(x, y);
         if (w.empty(x, y - 1)) { edges.push(x, y, x + 1, y); tops.push(x, y); }
-        if (y + 1 < H && w.empty(x, y + 1)) edges.push(x, y + 1, x + 1, y + 1);
+        if (y + 1 < w.H && w.empty(x, y + 1)) edges.push(x, y + 1, x + 1, y + 1);
         if (x > 0 && w.empty(x - 1, y)) edges.push(x, y, x, y + 1);
         if (x < W - 1 && w.empty(x + 1, y)) edges.push(x + 1, y, x + 1, y + 1);
       }
@@ -593,7 +643,7 @@ export class Renderer {
     for (const [key, cells] of groups) {
       ctx.beginPath();
       for (let i = 0; i < cells.length; i += 2) ctx.rect(cells[i] * TX, cells[i + 1] * TX, TX, TX);
-      ctx.fillStyle = this.pattern(key === 'bedrock' ? 'magma' : key, key === 'bedrock' ? 'back' : 'front');
+      ctx.fillStyle = this.pattern(key, 'front');
       ctx.fill();
     }
     this.setFront(1);
@@ -651,7 +701,7 @@ export class Renderer {
         if (w.flags[i] & F_REV) {
           const ore = ORES[o];
           const heart = o === ORE_HEART;
-          const s = T * (heart ? 0.95 : 0.62);
+          const s = T * (heart ? 0.95 : 0.56);
           ctx.fillStyle = 'rgba(20,10,5,0.35)';
           ctx.beginPath(); ctx.ellipse(sx, sy + s * 0.08, s * 0.42, s * 0.36, 0, 0, Math.PI * 2); ctx.fill();
           if (heart) {
@@ -664,7 +714,7 @@ export class Renderer {
             ctx.beginPath(); ctx.arc(sx, sy, s * 1.2, 0, Math.PI * 2); ctx.fill();
             this.icon('diamond', sx, sy, s * pulse);
           } else {
-            this.icon(ore.icon, sx, sy, s);
+            this.icon(ore.icon, sx, sy, s, (hash2(x, y, 31) - 0.5) * 0.6);
           }
           if (ore.glow) {
             this.lights.push([x + 0.5, y + 0.5, SLAB, heart ? 3 : 0.9, heart ? 1 : 0.55, ore.glow]);
@@ -680,6 +730,23 @@ export class Renderer {
           }
         }
       }
+    }
+  }
+
+  // dinosaur skeletons pressed against the glass
+  drawDinos() {
+    const w = this.game.world, ctx = this.ctx;
+    for (const d of w.dinos) {
+      if (d.y > this.y1 + 1 || d.y + d.h < this.y0 - 1) continue;
+      const img = this.a.img['dino' + d.kind];
+      const asp = img.width / img.height;
+      let iw = d.w, ih = d.w / asp;
+      if (ih > d.h) { ih = d.h; iw = d.h * asp; }
+      this.setFront(1);
+      ctx.globalAlpha = d.found ? 1 : 0.62;
+      ctx.drawImage(img, d.x + (d.w - iw) / 2, d.y + (d.h - ih) / 2, iw, ih);
+      ctx.globalAlpha = 1;
+      this.identity();
     }
   }
 
@@ -701,9 +768,9 @@ export class Renderer {
     this.setFront(1);
     ctx.save();
     ctx.beginPath();
-    ctx.rect(0, 0, W, H);
+    ctx.rect(0, 0, W, this.game.world.H);
     ctx.clip();
-    const v0 = Math.max(0, this.y0), v1 = Math.min(H, this.y1 + 2);
+    const v0 = Math.max(0, this.y0), v1 = Math.min(this.game.world.H, this.y1 + 2);
     ctx.fillStyle = 'rgba(255,255,255,0.045)';
     ctx.beginPath();
     for (let a = -40; a < W + 10; a += 9) {
@@ -749,16 +816,17 @@ export class Renderer {
   drawFrame() {
     const cols = { front: '#9b6a3c', top: '#c99559', side: '#6e4626' };
     const t = 0.32, zf = SLAB + 0.07, zb = -0.07;
-    this.box(-t, 0, -0.3, H + t, zb, zf, cols, ['top', 'front']);
-    this.box(-t, W + t, H, H + t, zb, zf, cols, ['front']);
-    this.box(W, W + t, -0.3, H + t, zb, zf, cols, ['top', 'front', 'side']);
+    const top = Math.max(-0.3, this.y0 - 1), bot = this.y1 + 2;
+    const faces = top < 0 ? ['top', 'front'] : ['front'];
+    this.box(-t, 0, top, bot, zb, zf, cols, faces);
+    this.box(W, W + t, top, bot, zb, zf, cols, [...faces, 'side']);
     // wood grain on the posts
     const ctx = this.ctx;
     ctx.strokeStyle = 'rgba(60,35,18,0.35)';
     ctx.lineWidth = Math.max(1, this.T * 0.02);
     ctx.beginPath();
     for (const X of [-t * 0.5, W + t * 0.5]) {
-      for (let D = Math.max(0, this.y0); D < Math.min(H, this.y1 + 2); D += 1.7) {
+      for (let D = Math.max(0, Math.floor(this.y0 / 1.7) * 1.7); D < this.y1 + 2; D += 1.7) {
         const [ax, ay] = this.proj(X - 0.05, D, zf);
         const [bx, by] = this.proj(X + 0.05, D + 0.9, zf);
         ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
@@ -911,9 +979,9 @@ export class Renderer {
       const surf = this.night * 0.3 * (D < 0 ? 1 : Math.max(0.35, 1 - D / 8));
       return Math.max(deep, surf);
     };
-    const g = lc.createLinearGradient(0, yAt(-12) * sc, 0, yAt(H + 4) * sc);
-    const span = H + 16;
-    for (let D = -12; D <= H + 4; D += 4) g.addColorStop((D + 12) / span, `rgba(10,6,28,${dark(D).toFixed(3)})`);
+    const d0 = this.y0 - 14, d1 = this.y1 + 6;
+    const g = lc.createLinearGradient(0, yAt(d0) * sc, 0, yAt(d1) * sc);
+    for (let D = d0; D <= d1; D += 2) g.addColorStop((D - d0) / (d1 - d0), `rgba(10,6,28,${dark(D).toFixed(3)})`);
     lc.fillStyle = g;
     lc.fillRect(0, 0, lw, lh);
     // punch out the lights

@@ -8,16 +8,15 @@ Du bist vor allem **Beobachter** – und hast nur wenige Befehle.
 
 ## So funktioniert's
 
-- 👀 Die Zwerge graben von allein – wie Ameisen. Sie bohren Gänge, legen Kammern an, hängen Laternen auf,
-  plaudern miteinander und bringen ihre Funde zur Lore an der Oberfläche.
-- 📯 Du hast höchstens **3 Befehle** (Hornstöße), die sich langsam wieder aufladen:
-  - 🚩 **Graben** – tippe auf eine Stelle, der nächste Zwerg gräbt dorthin.
-  - 🍺 **Festmahl** – alle Zwerge kommen an die Tafel und graben danach 2 Minuten schneller.
-- ⛏️ **Werkstatt** – mit Gold neue Zwerge anwerben und bessere Spitzhacken kaufen
-  (Erde → Lehm → Stein → Tiefgestein → Glutfels).
-- 🌙 Tag-/Nachtwechsel: müde Zwerge gehen abends ins Häuschen.
-- 💎 Ganz unten im Glutfels liegt das legendäre **Herz des Berges**.
-- ✋ Ziehen = bewegen, zwei Finger / Mausrad = zoomen, Zwerg antippen = Infos & Folgen, ⏩ = Zeitraffer.
+- 👀 Die Zwerge graben von allein – wie Ameisen. Sie bohren Gänge, bauen **Leitern** zum Klettern und
+  **Brücken** über Löcher, legen Kammern an, hängen Laternen auf, plaudern und bringen Funde zur Lore.
+- 🦖 In der Erde stecken **Dino-Skelette** (T-Rex, Triceratops, Brachiosaurus, Stegosaurus). Die Zwerge
+  graben um sie herum und bekommen beim Freilegen einen Gold-Bonus.
+- ⬇️ **Endlos tief:** Erde → Lehm → Stein → Tiefgestein → Glutfels → Kristallfels → Obsidian → Zwergenruinen → …
+  Jede Schicht braucht eine bessere Spitzhacke, und die Schätze werden immer wertvoller.
+- 📯 Höchstens **3 Befehle**, die sich langsam aufladen: 🚩 Grabziel antippen · 🍺 Festmahl (schneller graben).
+- 🔨 **Werkstatt:** neue Zwerge anwerben, bessere Spitzhacken kaufen.
+- ✋ Ziehen = bewegen, zwei Finger / Mausrad = zoomen, Zwerg antippen = Infos & Folgen, ▶ = Zeitraffer.
 
 Der Spielstand wird automatisch im Browser gespeichert; beim Zurückkehren holen die Zwerge die
 verpasste Zeit (bis zu 30 Minuten) nach.
@@ -28,11 +27,13 @@ verpasste Zeit (bis zu 30 Minuten) nach.
 - Eigener isometrischer Renderer: Die Erde ist eine dünne Scheibe hinter Glas; Rückwände, Böden,
   Seitenwände und Vorderflächen werden texturiert in der richtigen Reihenfolge gezeichnet,
   dazu Lichtkarte (Laternen, Leuchtpilze, Edelsteine), Tag/Nacht, Partikel.
-- Zwergen-KI mit Dijkstra-Wegsuche (Graben kostet Zeit, vorhandene Gänge sind billig) und
-  ameisenartigem Stollenbau.
+- Zwergen-KI mit Dijkstra-Wegsuche (Graben, Leiter- und Brückenbau kosten Zeit, vorhandene Gänge sind billig)
+  und ameisenartigem Stollenbau; die Welt wird beim Tiefergraben stückweise nachgeneriert.
 - Sounds & Musik werden per WebAudio synthetisiert.
-- Alle Grafiken (Zwerge, Schätze, Requisiten, Texturen, Titelbild, App-Icon) wurden mit
-  **OpenArt** generiert und mit `tools/process_assets.py` freigestellt und zugeschnitten.
+- Zwerge, Dino-Skelette, Requisiten, Gesteinstexturen, Titelbild und App-Icon wurden mit **OpenArt**
+  generiert und mit `tools/process_assets.py` freigestellt und zugeschnitten.
+- Die Icons (Schätze, Bedienelemente) sind ein eigenes, handgezeichnetes Vektor-Set (`js/icons.js`),
+  das sowohl im Canvas als auch in der Oberfläche benutzt wird.
 
 ## Lokal starten
 
