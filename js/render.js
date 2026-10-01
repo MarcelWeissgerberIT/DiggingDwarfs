@@ -10,6 +10,14 @@ import {
 } from './config.js';
 import { F_REV, F_LAMP, F_MUSH, F_CAVE, F_LADDER, F_BRIDGE } from './world.js';
 import { drawIcon } from './icons.js';
+import { sceneryMethods, Critters } from './scenery.js';
+
+// frames in each row of assets/dwarfs.webp
+const FR = {
+  IDLE: 0, WALK1: 1, WALK2: 2, WALK3: 3, CLIMB: 4, CLIMB2: 5, WINDUP: 6, STRIKE: 7,
+  CARRY_A: 8, CARRY_B: 9, SLEEP: 10, CHEER: 11, BEER: 12, HAMMER: 13, WAVE: 14, DIGDOWN: 15,
+};
+const WALK = [FR.WALK1, FR.WALK2, FR.WALK3, FR.WALK2];
 import { hash2, clamp, lerp } from './rng.js';
 
 const TX = 64;            // texels per cell (textures are 256px = 4 cells)
@@ -73,6 +81,10 @@ export class Renderer {
     this.stars = Array.from({ length: 70 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6 }));
     this.motes = Array.from({ length: 40 }, () => ({ x: Math.random(), y: Math.random(), p: Math.random() * 6 }));
     this.smokeT = 0;
+    this.critters = new Critters(this);
+    this.auto = false;      // observer mode
+    this.autoT = 0;
+    this.interest = [];     // exciting moments the observer camera should visit
     this.resize();
   }
 
@@ -93,6 +105,40 @@ export class Renderer {
     return [(X - Z) * ISO * this.T + this.ox, ((X + Z) * 0.5 + D) * this.T + this.oy];
   }
   isoToScreen(ix, iy) { return [ix * this.T + this.ox, iy * this.T + this.oy]; }
+
+  setAuto(on) {
+    this.auto = on;
+    this.autoT = 0;
+    if (!on) { this.zoomTarget = null; if (this.selected && this.selected === this.follow) this.selected = null; this.follow = null; }
+  }
+
+  pushInterest(d) {
+    if (!d) return;
+    this.interest.push({ d, t: this.time });
+    if (this.auto) this.autoT = Math.min(this.autoT, 0.8);
+  }
+
+  autoUpdate(dt) {
+    if (!this.auto) return;
+    this.autoT -= dt;
+    this.interest = this.interest.filter((p) => this.time - p.t < 10);
+    if (this.autoT <= 0 || !this.follow || this.follow.alpha < 0.1) {
+      const g = this.game;
+      let target = null;
+      const ev = this.interest.pop();
+      if (ev && ev.d.alpha > 0.5) target = ev.d;
+      if (!target) {
+        const busy = g.dwarfs.filter((d) => d.alpha > 0.5 && d !== this.follow &&
+          ['dig', 'build', 'walk', 'cheer', 'chat', 'feast', 'sleep'].includes(d.state));
+        target = busy[Math.floor(Math.random() * busy.length)] || g.dwarfs.find((d) => d.alpha > 0.5) || null;
+      }
+      this.follow = target;
+      this.selected = target;
+      this.autoT = ev ? 8 : 13 + Math.random() * 8;
+      this.zoomTarget = 50 + Math.random() * 22;
+    }
+    if (this.zoomTarget) this.cam.T += (this.zoomTarget - this.cam.T) * Math.min(1, dt * 1.2);
+  }
 
   centerOn(X, D, instant = false) {
     const [ix, iy] = this.isoOf(X, D);
@@ -228,6 +274,7 @@ export class Renderer {
   draw(dt) {
     this.time += dt;
     this.dt = dt;
+    this.autoUpdate(dt);
     const g = this.game;
     // camera smoothing / follow
     if (this.follow) {
@@ -253,6 +300,7 @@ export class Renderer {
     ctx.imageSmoothingQuality = 'high';
     this.identity();
     this.computeRange();
+    this.critters.update(dt);
     this.drawBackground();
     this.drawMeadow();
     this.drawBackWalls();
@@ -260,14 +308,19 @@ export class Renderer {
     this.drawLadders();
     this.drawBridges();
     this.drawCaveDecor();
+    this.drawDecor();
+    this.drawRooms();
     this.drawEntities(false);
+    this.critters.drawInside();
     this.drawFront();
     this.drawOres();
     this.drawDinos();
+    this.critters.drawFront();
     this.drawParticles(['crumb']);
     this.drawGlass();
     this.drawFrame();
     this.drawSurface();
+    this.critters.drawSurface();
     this.drawParticles(['smoke']);
     this.drawLighting();
     this.drawParticles(['spark', 'conf']);
@@ -519,74 +572,83 @@ export class Renderer {
 
   drawDwarf(d) {
     const ctx = this.ctx, T = this.T;
+    if (d.alpha <= 0.01) return;
     const Z = this.dwarfZ(d);
     const fx = d.state === 'feast' ? ((d.id * 0.37) % 0.6) - 0.3 : 0;
     let [sx, sy] = this.proj(d.x + fx, d.y, Z);
-    if (d.alpha <= 0.01) return;
     const w = this.game.world;
-    const onLadder = (d.state === 'walk' && d.move && d.move.y !== d.cy) ||
-      (d.state !== 'walk' && w.flag(d.cx, d.cy, F_LADDER) && !w.solid(d.cx, d.cy + 1));
-    const grounded = !onLadder && (w.solid(Math.floor(d.x), Math.round(d.y)) || w.flag(Math.floor(d.x), Math.round(d.y) - 1, F_BRIDGE));
-    let frame = 0, rot = 0, bob = 0, sxs = 1, sys = 1;
+    const climbing = (d.state === 'walk' && d.move && d.move.y !== d.cy) ||
+      ((d.state === 'idle' || d.state === 'build') && w.flag(d.cx, d.cy, F_LADDER) && !w.supported(d.cx, d.cy));
     const t = d.anim;
-    if (d.state === 'build') this.drawBuildGhost(d);
-    if (d.state === 'dig' || d.state === 'craft' || d.state === 'build') {
-      const ph = d.swingT / 0.55;
-      frame = ph < 0.62 ? 2 : 0;
-      rot = ph < 0.62 ? -0.05 * ph : 0.22 - (ph - 0.62) * 0.4;
-      const dy = d.state === 'craft' ? 1 : d.state === 'build' ? 0 : d.digCell.y - d.cy;
-      if (dy > 0) rot += 0.15; else if (dy < 0) rot -= 0.25;
-      if (ph > 0.62 && ph < 0.75) { sys = 0.94; sxs = 1.05; }
-    } else if (d.state === 'walk') {
-      frame = d.sack.length ? 3 : 0;
-      if (onLadder) {
-        bob = Math.sin(t * 14) * 0.03 * T;
-        rot = Math.sin(t * 7) * 0.05;
-      } else {
-        bob = -Math.abs(Math.sin(t * 9)) * 0.07 * T;
-        rot = Math.sin(t * 9) * 0.09;
+    let f = FR.IDLE, flip = d.facing < 0, bob = 0, sxs = 1, sys = 1;
+    const walkCycle = () => {
+      if (d.sack.length) { f = Math.floor(t * 5) % 2 ? FR.CARRY_A : FR.CARRY_B; bob = -Math.abs(Math.sin(t * 10)) * 0.03 * T; }
+      else { f = WALK[Math.floor(t * 7.5) % 4]; bob = -Math.abs(Math.sin(t * 15)) * 0.02 * T; }
+    };
+    switch (d.state) {
+      case 'walk':
+        if (climbing) { f = FR.CLIMB; flip = Math.floor(t * 4) % 2 === 1; bob = Math.sin(t * 12.5) * 0.02 * T; } else walkCycle();
+        break;
+      case 'enter': case 'exit':
+        walkCycle();
+        break;
+      case 'dig': {
+        const ph = d.swingT / 0.55;
+        f = ph < 0.6 ? FR.WINDUP : d.digCell.y > d.cy ? FR.DIGDOWN : FR.STRIKE;
+        if (ph >= 0.6 && ph < 0.72) { sys = 0.96; sxs = 1.04; }
+        break;
       }
-    } else if (d.state === 'sleep') {
-      frame = 0;
-      rot = -1.45;
-      sy -= T * 0.26;
-      sx += T * 0.3 * d.facing;
-    } else if (d.state === 'cheer') {
-      frame = d.sack.length ? 3 : 0;
-      bob = -Math.abs(Math.sin(t * 11)) * 0.22 * T;
-      sys = 1 + Math.sin(t * 22) * 0.03;
-    } else if (d.state === 'feast') {
-      frame = 0;
-      bob = -Math.abs(Math.sin(t * 3 + d.id)) * 0.05 * T;
-      rot = Math.sin(t * 2 + d.id) * 0.06;
-    } else {
-      frame = d.sack.length ? 3 : 0;
-      sys = 1 + Math.sin(t * 2.2) * 0.015;
+      case 'craft':
+        f = d.swingT / 0.55 < 0.6 ? FR.WINDUP : FR.DIGDOWN;
+        break;
+      case 'build':
+        f = climbing ? FR.CLIMB : FR.HAMMER;
+        bob = ((d.swingT / 0.55) % 1 < 0.3 ? -0.025 : 0) * T;
+        break;
+      case 'sleep':
+        f = FR.SLEEP;
+        sys = 1 + Math.sin(t * 1.6) * 0.025;
+        if (d.bed) sy -= T * 0.3;
+        break;
+      case 'cheer':
+        f = FR.CHEER;
+        bob = -Math.abs(Math.sin(t * 9)) * 0.22 * T;
+        break;
+      case 'feast':
+        f = FR.BEER;
+        bob = -Math.abs(Math.sin(t * 2 + d.id)) * 0.03 * T;
+        break;
+      case 'chat':
+        f = Math.floor(t * 1.2 + d.id) % 3 === 0 ? FR.WAVE : FR.IDLE;
+        break;
+      default:
+        f = climbing ? FR.CLIMB : d.sack.length ? FR.CARRY_A : FR.IDLE;
+        sys = 1 + Math.sin(t * 2.2) * 0.015;
     }
-    if (grounded && d.state !== 'sleep' && d.state !== 'feast') {
+    const grounded = !climbing && d.state !== 'sleep' && d.state !== 'feast' &&
+      (w.solid(Math.floor(d.x), Math.round(d.y)) || w.flag(Math.floor(d.x), Math.round(d.y) - 1, F_BRIDGE) || d.y <= 0.05);
+    if (grounded) {
       ctx.fillStyle = 'rgba(20,10,5,0.28)';
       ctx.beginPath();
-      ctx.ellipse(sx, sy, T * 0.25, T * 0.07, 0, 0, Math.PI * 2);
+      ctx.ellipse(sx, sy, T * 0.24, T * 0.07, 0, 0, Math.PI * 2);
       ctx.fill();
     }
-    const size = T * 1.0;
+    const size = T * 1.12;
     ctx.save();
     ctx.globalAlpha = d.alpha;
     ctx.translate(sx, sy + bob);
-    ctx.scale(d.facing * sxs, sys);
-    ctx.rotate(rot);
-    ctx.drawImage(this.a.img.dwarfs, frame * SPRITE, d.variant * SPRITE, SPRITE, SPRITE,
+    ctx.scale((flip ? -1 : 1) * sxs, sys);
+    ctx.drawImage(this.a.img.dwarfs, f * SPRITE, (d.variant % 6) * SPRITE, SPRITE, SPRITE,
       -size / 2, -size * (248 / 256), size, size);
     ctx.restore();
     if (d.state === 'craft') {
       ctx.fillStyle = '#9aa0a8';
-      ctx.strokeStyle = '#3b2414';
+      ctx.strokeStyle = INK;
       ctx.lineWidth = Math.max(1, T * 0.025);
       ctx.beginPath();
       ctx.ellipse(sx + d.facing * T * 0.36, sy - T * 0.08, T * 0.16, T * 0.11, 0, 0, Math.PI * 2);
       ctx.fill(); ctx.stroke();
     }
-    if (d.state === 'feast') this.icon('beer', sx + d.facing * T * 0.32, sy - T * 0.42 + bob, T * 0.3);
     // every dwarf carries a little candle light; miners with helmets shine brighter
     this.lights.push([d.x, d.y - 0.45, Z, d.variant === 3 ? 2.0 : 1.25, 0.8, '#ffd9a0']);
     d._sx = sx; d._sy = sy + bob;
@@ -1007,72 +1069,13 @@ export class Renderer {
     const [lx, ly] = this.proj(X - 0.08, -1.18, 0.2);
     this.icon('lantern', lx, ly, T * 0.34);
     this.lights.push([X - 0.08, -1.18, 0.2, 1.8, 0.9, '#ffb050']);
-  }
-
-  drawCottage() {
-    const ctx = this.ctx, T = this.T;
-    const x0 = COTTAGE_X - 0.6, x1 = COTTAGE_X + 1.6, z0 = -2.8, z1 = -0.7, top = -1.25, ridge = -2.25;
-    const zm = (z0 + z1) / 2;
-    this.texFace('front', x0, x1, top, 0, z1, 'ruins');
-    this.texFace('side', z0, z1, top, 0, x1, 'ruins');
-    this.poly([[x1, top, z1], [x1, top, z0], [x1, ridge + 0.1, zm]], '#b07a45');
-    // door
-    const dx = COTTAGE_X + 0.5;
-    this.setBack(1, z1);
-    ctx.beginPath();
-    ctx.moveTo(dx - 0.24, 0); ctx.lineTo(dx - 0.24, -0.55);
-    ctx.quadraticCurveTo(dx - 0.24, -0.86, dx, -0.86);
-    ctx.quadraticCurveTo(dx + 0.24, -0.86, dx + 0.24, -0.55);
-    ctx.lineTo(dx + 0.24, 0); ctx.closePath();
-    ctx.fillStyle = '#8a5226'; ctx.fill();
-    ctx.strokeStyle = INK; ctx.lineWidth = 0.04; ctx.stroke();
-    ctx.strokeStyle = 'rgba(59,36,20,0.6)'; ctx.lineWidth = 0.02;
-    ctx.beginPath(); ctx.moveTo(dx - 0.08, -0.8); ctx.lineTo(dx - 0.08, 0); ctx.moveTo(dx + 0.08, -0.8); ctx.lineTo(dx + 0.08, 0); ctx.stroke();
-    ctx.fillStyle = '#f6c445';
-    ctx.beginPath(); ctx.arc(dx + 0.14, -0.42, 0.035, 0, Math.PI * 2); ctx.fill();
-    // window on the side wall, warm at night
-    this.setSide(x1, 1);
-    const glow = this.night > 0.3;
-    ctx.fillStyle = glow ? '#ffd77a' : '#8fc9ef';
-    ctx.fillRect(zm - 0.24, -0.92, 0.48, 0.42);
-    ctx.strokeStyle = INK; ctx.lineWidth = 0.04;
-    ctx.strokeRect(zm - 0.24, -0.92, 0.48, 0.42);
-    ctx.beginPath(); ctx.moveTo(zm, -0.92); ctx.lineTo(zm, -0.5); ctx.moveTo(zm - 0.24, -0.71); ctx.lineTo(zm + 0.24, -0.71); ctx.stroke();
-    this.identity();
-    // chimney behind the ridge
-    const stone = { front: '#8d96a1', top: '#b3bcc6', side: '#6d7580' };
-    this.box(x0 + 1.4, x0 + 1.72, -2.7, -1.6, zm - 0.55, zm - 0.23, stone, ['front', 'side', 'top']);
-    // thatched roof
-    const e = 0.18;
-    const roof = [[x0 - e, top + 0.05, z1 + 0.22], [x1 + e, top + 0.05, z1 + 0.22], [x1 + e, ridge, zm], [x0 - e, ridge, zm]];
-    this.poly(roof, '#e0ad4f');
-    ctx.strokeStyle = '#b9822f';
-    ctx.lineWidth = Math.max(1, T * 0.02);
-    ctx.beginPath();
-    for (let t = 0.06; t < 1; t += 0.085) {
-      const X = x0 - e + (x1 - x0 + 2 * e) * t;
-      const [ax, ay] = this.proj(X, top + 0.03, z1 + 0.2), [bx, by] = this.proj(X, ridge + 0.04, zm);
-      ctx.moveTo(ax, ay); ctx.lineTo(bx, by);
-    }
-    ctx.stroke();
-    this.poly([[x1 + e, top + 0.05, z1 + 0.22], [x1 + e, top + 0.05, z0 - 0.22], [x1 + e, ridge, zm]], '#c9923d');
-    const [r0x, r0y] = this.proj(x0 - e, ridge, zm), [r1x, r1y] = this.proj(x1 + e, ridge, zm);
-    ctx.strokeStyle = '#a06b26'; ctx.lineWidth = Math.max(2, T * 0.07); ctx.lineCap = 'round';
-    ctx.beginPath(); ctx.moveTo(r0x, r0y); ctx.lineTo(r1x, r1y); ctx.stroke();
-    // chimney smoke
-    this.smokeT -= this.dt;
-    if (this.smokeT <= 0) {
-      this.smokeT = 0.6 + Math.random() * 0.5;
-      const [ix, iy] = this.isoOf(x0 + 1.56, -2.75, zm - 0.39);
-      this.particles.push({ k: 'smoke', x: ix, y: iy, vx: 0.05, vy: -0.35, life: 3.2, t: 0, s: 0.1, c: '#ffffff' });
-    }
-    if (glow) this.lights.push([x1, -0.7, zm, 2.4, this.night, '#ffc070']);
+    this.drawBanner();
   }
 
   // where a surface dwarf stands in depth: at the table, or stepping through the cottage door
   dwarfZ(d) {
     if (d.state === 'feast') return 0.03;
-    if (d.cy === -1 && d.cx === COTTAGE_X && d.alpha < 1) return HALF - (1 - d.alpha) * 0.95;
+    if (d.door && (d.state === 'enter' || d.state === 'home' || d.state === 'exit')) return HALF + (d.door.z - HALF) * d.doorP;
     return HALF;
   }
 
@@ -1102,16 +1105,16 @@ export class Renderer {
     add(1.0, -2.3, () => this.drawPine(1.0, -2.3, 1.1));
     add(1.75, 0.22, () => this.drawSign(1.75, 0.22));
     add(ENTRANCE_X + 0.5, 0.06, () => this.drawHeadframe());
-    add(6.3, -2.9, () => this.drawOak(6.3, -2.9, 0.8));
+    add(6.5, -2.4, () => this.drawOak(6.5, -2.4, 0.8));
     add(STASH_X + 0.5, 0.25, () => this.drawStash());
     list.push({ k: FEAST_X + 4.5, f: () => this.drawTable() });
-    add(9.4, -3.4, () => this.drawPine(9.4, -3.4, 0.85));
-    add(COTTAGE_X + 0.5, -1.75, () => this.drawCottage());
+    add(10.3, -4.0, () => this.drawPine(10.3, -4.0, 0.9));
     add(15.3, 0.12, () => this.drawRocks(15.3, 0.12, 1));
-    add(16.9, -1.7, () => this.drawOak(16.9, -1.7, 1));
-    add(19.4, -3.1, () => this.drawPine(19.4, -3.1, 1.2));
+    add(17.0, -3.8, () => this.drawOak(17.0, -3.8, 0.95));
+    add(20.1, -4.0, () => this.drawPine(20.1, -4.0, 1.2));
     add(21.1, -0.2, () => this.drawRocks(21.1, -0.2, 0.7));
-    add(22.5, -1.5, () => this.drawOak(22.5, -1.5, 0.85));
+    add(23.5, -0.7, () => this.drawOak(23.5, -0.7, 0.75));
+    this.villageItems(add);
     for (const d of g.dwarfs) {
       if (d.y <= 0.05 && d.alpha > 0.01) add(d.x, this.dwarfZ(d), () => this.drawDwarf(d));
     }
@@ -1317,3 +1320,5 @@ function hexA(hex, a) {
 }
 
 export { F_CAVE };
+
+Object.assign(Renderer.prototype, sceneryMethods);

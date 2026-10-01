@@ -4,7 +4,7 @@
 Usage: python3 tools/process_assets.py <raw_dir>
 
 <raw_dir> must contain the original downloads:
-  dwarfs.png (4x4 sheet on magenta)   dinos.png (2x2 sheet on magenta)
+  pose0..5.png (4x3 pose sheets)  walk0..5.png (3x2 walk sheets)  dinos.png (2x2)
   splash.png, icon.png
   tex_{dirt,clay,stone,deep,grass,magma,crystal,obsidian,ruins}.png
 """
@@ -115,40 +115,69 @@ def despill_all(rgba, key):
     return np.clip(a, 0, 255).astype(np.uint8)
 
 
+# Atlas layout (one row per dwarf, 16 frames each):
+#  0 idle, 1-3 walk cycle, 4-5 climb (back view), 6 wind-up, 7 strike, 8-9 carry,
+#  10 sleep, 11 cheer, 12 beer, 13 hammer, 14 wave, 15 dig down
+# Sources: pose<v>.png (4x3 sheet: P0..P11) and walk<v>.png (3x2 sheet: W0..W5)
+FRAMES = [("P", 0), ("W", 0), ("W", 1), ("W", 2), ("W", 3), ("W", 3), ("P", 4), ("P", 5),
+          ("P", 6), ("W", 4), ("P", 7), ("P", 8), ("P", 9), ("P", 10), ("P", 11), ("W", 5)]
+FRAME_FIX = {
+    (1, 8): ("W", 4),  # the blue dwarf's sack pose came out as someone else
+    (4, 1): ("P", 1), (4, 2): ("P", 0), (4, 3): ("P", 2),  # her generated walk cycle had motion blur
+}
+KEEP_LARGEST = {(3, 9)}  # stray smudge next to the helmet dwarf's sack
+
+
+def cut_sheet(path, cols, rows):
+    out = []
+    for r, c, cell in split(Image.open(path), cols, rows):
+        rgba = key_cell(cell, tol=85, key="magenta")
+        rgba = despill_all(rgba, "magenta")
+        rgba = remove_specks(rgba, 0.004)
+        out.append(rgba)
+    return out
+
+
+def frame_anchor(rgba, lying=False):
+    x0, y0, x1, y1 = bbox(rgba[..., 3])
+    if lying:
+        return (x0 + x1) / 2, y1, (x0, y0, x1, y1)
+    band = rgba[int(y1 - (y1 - y0) * 0.12):y1, :, 3] > 60
+    xs = np.where(band.any(axis=0))[0]
+    return (xs.min() + xs.max()) / 2, y1, (x0, y0, x1, y1)
+
+
 def process_dwarfs(raw):
-    img = Image.open(os.path.join(raw, "dwarfs.png"))
-    cells = {}
-    for r, c, cell in split(img, 4, 4):
-        rgba = key_cell(cell, tol=80, key="magenta")
-        rgba = remove_specks(rgba)
-        cells[(r, c)] = rgba
-    # common scale: tallest sprite fits in 236px of a 256px cell
-    heights = []
-    anchors = {}
-    for k, rgba in cells.items():
-        x0, y0, x1, y1 = bbox(rgba[..., 3])
-        heights.append(y1 - y0)
-        # anchor x = centre of the opaque pixels in the lowest 12% (feet)
-        band = rgba[int(y1 - (y1 - y0) * 0.12):y1, :, 3] > 60
-        xs = np.where(band.any(axis=0))[0]
-        ax = (xs.min() + xs.max()) / 2
-        anchors[k] = (ax, y1, x0, y0, x1)
     S = 256
-    scale = 228.0 / max(heights)
-    sheet = Image.new("RGBA", (S * 4, S * 4), (0, 0, 0, 0))
-    for (r, c), rgba in cells.items():
-        ax, ay, x0, y0, x1 = anchors[(r, c)]
-        im = Image.fromarray(rgba).crop((x0, y0, x1, ay))
-        nw, nh = max(1, round(im.width * scale)), max(1, round(im.height * scale))
-        im = im.resize((nw, nh), Image.LANCZOS)
-        # feet anchor at (128, 248) inside the cell
-        px = round(S / 2 - (ax - x0) * scale)
-        py = 248 - nh
-        cellimg = Image.new("RGBA", (S, S), (0, 0, 0, 0))
-        cellimg.paste(im, (px, py))
-        sheet.alpha_composite(cellimg, (c * S, r * S))
-    sheet.save(os.path.join(OUT, "dwarfs.png"), optimize=True)
-    print("dwarfs.png", sheet.size)
+    IDLE_H = 196
+    sheet = Image.new("RGBA", (S * 16, S * 6), (0, 0, 0, 0))
+    for v in range(6):
+        P = cut_sheet(os.path.join(raw, f"pose{v}.png"), 4, 3)
+        Wk = cut_sheet(os.path.join(raw, f"walk{v}.png"), 3, 2)
+        hp = bbox(P[0][..., 3])
+        hw = bbox(Wk[1][..., 3])
+        scale_p = IDLE_H / (hp[3] - hp[1])
+        scale_w = IDLE_H / (hw[3] - hw[1])
+        for fi, src in enumerate(FRAMES):
+            kind, idx = FRAME_FIX.get((v, fi), src)
+            rgba = P[idx] if kind == "P" else Wk[idx]
+            if (v, fi) in KEEP_LARGEST:
+                rgba = rgba.copy()
+                lab, n = ndimage.label(rgba[..., 3] > 40)
+                if n > 1:
+                    sizes = ndimage.sum(np.ones_like(lab), lab, range(1, n + 1))
+                    rgba[(lab != (np.argmax(sizes) + 1)) & (lab > 0), 3] = 0
+            scale = scale_p if kind == "P" else scale_w
+            ax, ay, (x0, y0, x1, y1) = frame_anchor(rgba, lying=(kind == "P" and idx == 7))
+            im = Image.fromarray(rgba).crop((x0, y0, x1, ay))
+            nw, nh = max(1, round(im.width * scale)), max(1, round(im.height * scale))
+            im = im.resize((nw, nh), Image.LANCZOS)
+            cell = Image.new("RGBA", (S, S), (0, 0, 0, 0))
+            cell.paste(im, (round(S / 2 - (ax - x0) * scale), 248 - nh))
+            sheet.alpha_composite(cell, (fi * S, v * S))
+        print("dwarf", v, "done")
+    sheet.save(os.path.join(OUT, "dwarfs.webp"), quality=90, method=6)
+    print("dwarfs.webp", sheet.size, os.path.getsize(os.path.join(OUT, "dwarfs.webp")))
 
 
 def process_dinos(raw):
@@ -202,6 +231,9 @@ def process_misc(raw):
 if __name__ == "__main__":
     raw = sys.argv[1]
     os.makedirs(OUT, exist_ok=True)
+    if len(sys.argv) > 2 and sys.argv[2] == "dwarfs":
+        process_dwarfs(raw)
+        sys.exit(0)
     process_dwarfs(raw)
     process_dinos(raw)
     process_textures(raw)

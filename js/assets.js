@@ -41,7 +41,7 @@ function shade(img, { k, tint, t, c: contrast }) {
 
 export async function loadAssets(onProgress) {
   const list = {
-    dwarfs: 'assets/dwarfs.png',
+    dwarfs: 'assets/dwarfs.webp',
     dino0: 'assets/dinos/0.png',
     dino1: 'assets/dinos/1.png',
     dino2: 'assets/dinos/2.png',

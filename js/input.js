@@ -7,6 +7,7 @@ export class Input {
     this.onTap = onTap;
     this.ptrs = new Map();
     this.vel = [0, 0];
+    this.lastInput = performance.now();
     this.down = null;
     canvas.addEventListener('pointerdown', (e) => this.pd(e));
     canvas.addEventListener('pointermove', (e) => this.pm(e));
@@ -16,7 +17,13 @@ export class Input {
     canvas.addEventListener('contextmenu', (e) => e.preventDefault());
   }
 
+  touched() {
+    this.lastInput = performance.now();
+    if (this.r.auto) { this.r.setAuto(false); this.onManual?.(); }
+  }
+
   pd(e) {
+    this.lastInput = performance.now();
     this.cv.setPointerCapture?.(e.pointerId);
     this.ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
     this.vel = [0, 0];
@@ -48,12 +55,14 @@ export class Input {
       }
       this.pinch = s;
       this.r.follow = null;
+      this.touched();
       return;
     }
     if (this.down && !this.down.moved && Math.hypot(e.clientX - this.down.x, e.clientY - this.down.y) > 8) {
       this.down.moved = true;
     }
     if (this.down && this.down.moved) {
+      this.touched();
       cam.x -= dx / cam.T;
       cam.y -= dy / cam.T;
       this.vel = [dx / cam.T, dy / cam.T];
@@ -74,6 +83,7 @@ export class Input {
 
   wheel(e) {
     e.preventDefault();
+    this.touched();
     this.zoomAt(e.clientX, e.clientY, Math.exp(-e.deltaY * 0.0015));
   }
 

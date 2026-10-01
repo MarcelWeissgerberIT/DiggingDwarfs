@@ -37,6 +37,7 @@ export class World {
     this.ore = new Uint8Array(0);
     this.flags = new Uint8Array(0);
     this.dinos = [];
+    this.rooms = []; // chambers the dwarfs furnished: { x, y, type: bed | store | shrine }
     this.version = 0;
   }
 
@@ -330,6 +331,7 @@ export class World {
   serialize() {
     return {
       seed: this.seed, H: this.H, dinos: this.dinos,
+      rooms: this.rooms.map(({ x, y, type }) => ({ x, y, type })),
       mat: b64enc(this.mat), bg: b64enc(this.bg), ore: b64enc(this.ore), flags: b64enc(this.flags),
     };
   }
@@ -340,6 +342,7 @@ export class World {
     w.seed = o.seed;
     w.H = o.H;
     w.dinos = o.dinos || [];
+    w.rooms = (o.rooms || []).map((r) => ({ ...r, taken: null }));
     w.mat = b64dec(o.mat, n);
     w.bg = b64dec(o.bg, n);
     w.ore = b64dec(o.ore, n);

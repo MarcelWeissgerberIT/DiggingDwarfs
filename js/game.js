@@ -1,7 +1,7 @@
 // Colony state: dwarfs, treasure, commands, day/night, saving.
 import {
   W, mat, band, valueMult, pickInfo, ORES, ORE_HEART, DINOS, DAY_LENGTH, NIGHT_START, HORN_MAX, HORN_REGEN,
-  ENTRANCE_X, STASH_X, FEAST_X, MAX_DWARFS, NAMES,
+  ENTRANCE_X, STASH_X, FEAST_X, MAX_DWARFS, NAMES, VILLAGE, VARIANTS,
 } from './config.js';
 import { World, F_LAMP } from './world.js';
 import { Dwarf } from './dwarf.js';
@@ -35,9 +35,11 @@ export class Game {
     this.heartFound = false;
     this.deepest = 4;
     this.deepestBand = 0;
+    this.feastsHeld = 0;
+    this.village = { cottage: 0 }; // building id -> game time it was built
     const used = new Set();
     for (let i = 0; i < 3; i++) {
-      const d = new Dwarf(this, { name: this.freshName(used), variant: i, cx: ENTRANCE_X - 1 + i * 2, cy: -1 });
+      const d = new Dwarf(this, { name: this.freshName(used), variant: [0, 4, 3][i], cx: ENTRANCE_X - 1 + i * 2, cy: -1 });
       d.facing = 1;
       this.dwarfs.push(d);
     }
@@ -60,7 +62,68 @@ export class Game {
   }
 
   digSpeed(d) {
-    return (1 + 0.3 * (this.pickLevel - 1)) * (this.buffT > 0 ? 1.5 : 1) * (d.energy < 25 ? 0.7 : 1);
+    return (1 + 0.3 * (this.pickLevel - 1)) * (1 + 0.06 * (d.level - 1)) *
+      (this.buffT > 0 ? 1.5 : 1) * (d.energy < 25 ? 0.7 : 1);
+  }
+
+  levelUp(d) {
+    d.say({ icon: 'star' });
+    this.event(`${d.name} ★${d.level}`, 'star');
+    this.hooks.cheer?.(d);
+  }
+
+  // ---------- village & rooms ----------
+  villageWants(b) {
+    switch (b.id) {
+      case 'house1': return this.dwarfs.length >= 5;
+      case 'house2': return this.dwarfs.length >= 7;
+      case 'house3': return this.dwarfs.length >= 10;
+      case 'forge': return this.pickLevel >= 2;
+      case 'museum': return (this.collection.dino || 0) >= 1;
+      case 'tavern': return this.feastsHeld >= 1;
+      default: return true;
+    }
+  }
+
+  checkVillage() {
+    for (const b of VILLAGE) {
+      if (this.village[b.id] !== undefined || !this.villageWants(b)) continue;
+      this.village[b.id] = this.time;
+      this.event(b.name, b.kind === 'museum' ? 'bone' : b.kind === 'forge' ? 'hammer' : b.kind === 'tavern' ? 'beer' : 'dwarf', true);
+      this.hooks.built?.(b);
+    }
+  }
+
+  homes() {
+    return VILLAGE.filter((b) => b.door !== undefined && this.village[b.id] !== undefined).map((b) => ({ col: b.door, z: b.z1 }));
+  }
+
+  nearestHome(x) {
+    let best = null, bd = Infinity;
+    for (const h of this.homes()) {
+      const d = Math.abs(h.col + 0.5 - x);
+      if (d < bd) { bd = d; best = h; }
+    }
+    return best;
+  }
+
+  addRoom(r) {
+    const w = this.world;
+    if (w.rooms.some((o) => Math.abs(o.x - r.x) <= 2 && Math.abs(o.y - r.y) <= 1)) return;
+    for (let dx = -1; dx <= 1; dx++) if (!w.empty(r.x + dx, r.y) || !w.empty(r.x + dx, r.y - 1)) return;
+    const beds = w.rooms.filter((o) => o.type === 'bed').length;
+    const type = beds < Math.ceil(this.dwarfs.length / 2) ? 'bed' : w.rooms.length % 4 === 3 ? 'shrine' : 'store';
+    w.rooms.push({ x: r.x, y: r.y, type, taken: null });
+  }
+
+  freeBed(map, d) {
+    let best = null, bc = Infinity;
+    for (const r of this.world.rooms) {
+      if (r.type !== 'bed' || (r.taken && r.taken !== d.id)) continue;
+      const c = costTo(map, r.x, r.y);
+      if (c < bc) { bc = c; best = r; }
+    }
+    return best;
   }
 
   update(dt) {
@@ -72,6 +135,8 @@ export class Game {
     if (this.stuckT > 0) this.stuckT -= dt; else this.stuck = false;
     if (this.feast) this.updateFeast(dt);
     for (const d of this.dwarfs) d.update(dt);
+    this.villageT = (this.villageT || 0) - dt;
+    if (this.villageT <= 0) { this.villageT = 1; this.checkVillage(); }
   }
 
   // ---------- world interaction ----------
@@ -250,6 +315,7 @@ export class Game {
     if (seated > 0) f.served += dt;
     if (f.served > 22 || f.t > 100) {
       this.feast = null;
+      this.feastsHeld++;
       this.buffT = 120;
       for (const d of this.dwarfs) d.energy = 100;
       this.hooks.sfx?.('cheer');
@@ -263,7 +329,10 @@ export class Game {
     const c = this.recruitCost();
     if (this.gold < c) return { ok: false, msg: 'Zu wenig Gold' };
     this.gold -= c;
-    const d = new Dwarf(this, { name: this.freshName(), cx: 0, cy: -1, joined: this.day });
+    const taken = this.dwarfs.map((o) => o.variant);
+    const fresh = [...Array(VARIANTS).keys()].filter((v) => !taken.includes(v));
+    const variant = fresh.length ? fresh[Math.floor(Math.random() * fresh.length)] : Math.floor(Math.random() * VARIANTS);
+    const d = new Dwarf(this, { name: this.freshName(), variant, cx: 0, cy: -1, joined: this.day });
     d.say({ icon: 'heart' });
     this.dwarfs.push(d);
     this.hooks.sfx?.('cheer');
@@ -297,6 +366,7 @@ export class Game {
       gold: this.gold, totalGold: this.totalGold, pickLevel: this.pickLevel, horns: this.horns,
       time: this.time, day: this.day, buffT: this.buffT, collection: this.collection,
       heartFound: this.heartFound, deepest: this.deepest, deepestBand: this.deepestBand,
+      feastsHeld: this.feastsHeld, village: this.village,
       flags: this.flags.map((f) => ({ x: f.x, y: f.y })),
     };
   }
@@ -324,6 +394,8 @@ export class Game {
     this.gold = o.gold; this.totalGold = o.totalGold; this.pickLevel = o.pickLevel; this.horns = o.horns;
     this.time = o.time; this.day = o.day; this.buffT = o.buffT || 0; this.collection = o.collection || {};
     this.heartFound = !!o.heartFound; this.deepest = o.deepest || 4; this.deepestBand = o.deepestBand || 0;
+    this.feastsHeld = o.feastsHeld || 0;
+    this.village = o.village || { cottage: 0 };
     this.flags = (o.flags || []).map((f) => ({ ...f, id: Math.random(), dwarf: null }));
     this.feast = null;
     this.claims = new Map();

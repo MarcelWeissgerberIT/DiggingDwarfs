@@ -10,6 +10,13 @@ Du bist vor allem **Beobachter** – und hast nur wenige Befehle.
 
 - 👀 Die Zwerge graben von allein – wie Ameisen. Sie bohren Gänge, bauen **Leitern** zum Klettern und
   **Brücken** über Löcher, legen Kammern an, hängen Laternen auf, plaudern und bringen Funde zur Lore.
+- 🏡 **Das Dorf wächst mit:** Neue Häuser, eine Schmiede, eine Taverne und ein Dino-Museum entstehen
+  auf der Wiese, sobald die Kolonie groß genug ist. Abends gehen die Zwerge nach Hause, die Fenster leuchten.
+- 🛏️ Unter Tage graben sie **Schlafkammern**, Lager und kleine Schreine – mit Betten, Fässern und Kerzen.
+- 🐛 Würmer, Käfer, Fledermäuse, Schmetterlinge, Glühwürmchen und Vögel bevölkern Erde und Wiese.
+- ⭐ Jeder Zwerg sammelt Erfahrung und steigt in **Stufen** auf – erfahrene Zwerge graben schneller.
+- 👁️ **Zuschau-Modus:** Das Auge oben (oder 90 Sekunden nichts tun) lässt die Kamera von selbst
+  zu den spannendsten Momenten schwenken.
 - 🦖 In der Erde stecken **Dino-Skelette** (T-Rex, Triceratops, Brachiosaurus, Stegosaurus). Die Zwerge
   graben um sie herum und bekommen beim Freilegen einen Gold-Bonus.
 - ⬇️ **Endlos tief:** Erde → Lehm → Stein → Tiefgestein → Glutfels → Kristallfels → Obsidian → Zwergenruinen → …
@@ -32,8 +39,8 @@ verpasste Zeit (bis zu 30 Minuten) nach.
 - Sounds & Musik werden per WebAudio synthetisiert.
 - Zwerge, Dino-Skelette, Gesteinstexturen, Titelbild und App-Icon wurden mit **OpenArt**
   generiert und mit `tools/process_assets.py` freigestellt und zugeschnitten.
-- Die Wiese oben (Förderturm, Steinhäuschen, Bäume, Zaun, Tafel) wird direkt isometrisch gezeichnet,
-  damit sie zur Erdscheibe passt.
+- Die Wiese oben (Förderturm, Dorf, Bäume, Zaun, Tafel), Kammern, Wurzeln, Tropfsteine und alle Tierchen
+  werden direkt isometrisch gezeichnet (`js/scenery.js`), damit sie zur Erdscheibe passen.
 - Die Icons (Schätze, Bedienelemente) sind ein eigenes, handgezeichnetes Vektor-Set (`js/icons.js`),
   das sowohl im Canvas als auch in der Oberfläche benutzt wird.
 

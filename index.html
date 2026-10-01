@@ -30,6 +30,7 @@
       <div class="pill small" title="Tag"><span id="clock-ico" data-icon="sun"></span><span id="day-val">1</span></div>
       <div class="spacer"></div>
       <div class="pill small" title="Zwerge"><span data-icon="dwarf"></span><span id="pop-val">3</span></div>
+      <button class="round" id="btn-watch" aria-label="Zuschauen"><span data-icon="eye"></span></button>
       <button class="round" id="btn-sound" aria-label="Ton an/aus"><span data-icon="sound"></span></button>
       <button class="round" id="btn-menu" aria-label="Menü"><span data-icon="menu"></span></button>
     </div>
@@ -39,7 +40,7 @@
     <div id="dwarf-card" hidden>
       <i class="portrait big" id="card-portrait"></i>
       <div class="card-main">
-        <b id="card-name">Zwerg</b>
+        <div class="card-title"><b id="card-name">Zwerg</b><span id="card-level"></span></div>
         <div id="card-act"></div>
         <div class="energy"><div id="card-energy"></div></div>
         <div id="card-sack"></div>

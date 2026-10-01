@@ -17,6 +17,7 @@ export const HORN_MAX = 3;
 export const HORN_REGEN = 45;    // seconds per command charge
 export const SACK_SIZE = 3;
 export const MAX_DWARFS = 12;
+export const VARIANTS = 6;       // dwarf looks in assets/dwarfs.webp (one row each)
 
 export const MAT = { AIR: 0, BORDER: 255 };
 
@@ -104,6 +105,18 @@ export const DINOS = [
   { name: 'Triceratops', rows: 4, aspect: 1.546 },
   { name: 'Brachiosaurus', rows: 6, aspect: 1.041 },
   { name: 'Stegosaurus', rows: 4, aspect: 1.506 },
+];
+
+// The village on the meadow grows with the colony. Geometry in meadow cells:
+// x0..x1 along the farm, z0..z1 in depth (0 = glass, negative = further back).
+export const VILLAGE = [
+  { id: 'cottage', name: 'Häuschen', kind: 'house', x0: 11.4, x1: 13.6, z0: -2.8, z1: -0.7, door: 12, roof: '#e0ad4f' },
+  { id: 'house1', name: 'Neues Haus', kind: 'house', x0: 3.6, x1: 5.4, z0: -4.2, z1: -2.9, door: 4, roof: '#c9603e' },
+  { id: 'forge', name: 'Schmiede', kind: 'forge', x0: 14.6, x1: 16.5, z0: -2.6, z1: -1.0 },
+  { id: 'house2', name: 'Neues Haus', kind: 'house', x0: 17.6, x1: 19.4, z0: -2.6, z1: -0.9, door: 18, roof: '#7a9a4a' },
+  { id: 'museum', name: 'Dino-Museum', kind: 'museum', x0: 20.6, x1: 23.4, z0: -3.4, z1: -1.3 },
+  { id: 'house3', name: 'Neues Haus', kind: 'house', x0: 7.4, x1: 9.2, z0: -4.2, z1: -2.9, door: 8, roof: '#5f7fae' },
+  { id: 'tavern', name: 'Taverne', kind: 'tavern' },
 ];
 
 export const NAMES = [

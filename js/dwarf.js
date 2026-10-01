@@ -1,6 +1,6 @@
 // A single dwarf with a tiny ant-like brain.
 import {
-  W, mat, ORES, SACK_SIZE, STASH_X, COTTAGE_X, NAMES, LIKES,
+  W, mat, ORES, SACK_SIZE, STASH_X, NAMES, LIKES, VARIANTS,
 } from './config.js';
 import { dijkstra, pathTo, costTo } from './path.js';
 import { F_REV, F_LADDER } from './world.js';
@@ -34,7 +34,7 @@ export class Dwarf {
     this.id = o.id ?? nextId;
     nextId = Math.max(nextId, this.id + 1);
     this.name = o.name ?? pick(NAMES);
-    this.variant = o.variant ?? Math.floor(Math.random() * 4);
+    this.variant = o.variant ?? Math.floor(Math.random() * VARIANTS);
     this.cx = o.cx ?? 0;
     this.cy = o.cy ?? -1;
     this.x = this.cx + 0.5;
@@ -50,6 +50,9 @@ export class Dwarf {
     this.joined = o.joined ?? 1;
     this.state = o.state === 'home' ? 'home' : 'idle';
     this.build = null;
+    this.door = o.door ?? null;   // house door this dwarf sleeps behind: { col, z }
+    this.doorP = this.state === 'home' ? 1 : 0;
+    this.bed = null;
     this.timer = o.timer ?? Math.random();
     this.task = null;
     this.path = [];
@@ -65,11 +68,15 @@ export class Dwarf {
 
   serialize() {
     const { id, name, variant, cx, cy, facing, sack, energy, dug, finds, best, likes, depthLove, joined } = this;
+    const home = this.state === 'home';
     return {
       id, name, variant, cx, cy, facing, sack, energy: Math.round(energy), dug, finds, best, likes, depthLove, joined,
-      state: this.state === 'home' ? 'home' : 'idle', timer: this.state === 'home' ? this.timer : 0,
+      state: home ? 'home' : 'idle', timer: home ? this.timer : 0, door: home ? this.door : null,
     };
   }
+
+  // experience: digging makes a dwarf better at it
+  get level() { return 1 + Math.floor(Math.sqrt(this.dug / 10)); }
 
   // sack items are [oreId, value]
   sackValue() { return this.sack.reduce((s, it) => s + it[1], 0); }
@@ -82,7 +89,8 @@ export class Dwarf {
   activity() {
     const t = this.task?.kind;
     switch (this.state) {
-      case 'home': return ['moon', 'schläft'];
+      case 'home': case 'enter': return ['moon', 'schläft'];
+      case 'exit': return ['sun', 'wach'];
       case 'sleep': return ['zzz', 'döst'];
       case 'feast': return ['beer', 'feiert'];
       case 'cheer': return ['star', 'jubelt'];
@@ -113,18 +121,37 @@ export class Dwarf {
     if (this.energy < 0) this.energy = 0;
     this.think(dt);
     switch (this.state) {
+      case 'enter': {
+        // walk from the path back to the house door, then vanish inside
+        const len = Math.max(0.3, Math.abs(this.door.z - 0.25));
+        this.doorP = Math.min(1, this.doorP + (dt * 1.4) / len);
+        if (this.doorP >= 1) this.state = 'home';
+        return;
+      }
       case 'home':
-        this.alpha = Math.max(0, this.alpha - dt * 3);
+        this.alpha = Math.max(0, this.alpha - dt * 4);
         this.energy = Math.min(100, this.energy + dt * 6);
         if ((this.timer -= dt) <= 0) {
+          this.state = 'exit';
+          this.alpha = 1;
+        }
+        return;
+      case 'exit': {
+        const len = Math.max(0.3, Math.abs((this.door?.z ?? 0) - 0.25));
+        this.doorP = Math.max(0, this.doorP - (dt * 1.4) / len);
+        if (this.doorP <= 0) {
           this.state = 'idle';
-          this.timer = 0.4;
+          this.timer = 0.3;
+          this.door = null;
           this.say(pick([{ icon: 'sun' }, '♪']));
         }
         return;
+      }
       case 'sleep':
-        this.energy = Math.min(100, this.energy + dt * 4.5);
+        this.energy = Math.min(100, this.energy + dt * (this.bed ? 6 : 4.5));
         if ((this.timer -= dt) <= 0 && this.energy >= 100) {
+          if (this.bed) this.bed.taken = null;
+          this.bed = null;
           this.state = 'idle';
           this.timer = 0.5;
           this.say({ icon: 'sun' });
@@ -283,8 +310,10 @@ export class Dwarf {
     this.digProg += (dt * g.digSpeed(this)) / mat(m).time;
     this.energy -= dt * 0.38;
     if (this.digProg >= 1) {
+      const lvl = this.level;
       this.dug++;
       g.digCell(this, n.x, n.y);
+      if (this.level > lvl) g.levelUp(this);
       if (this.state === 'dig') { this.state = 'idle'; this.timer = 0; }
     }
   }
@@ -305,6 +334,10 @@ export class Dwarf {
     this.path = [];
     if (this.state === 'walk') return; // finish the current step first
     if (this.state === 'home') { this.timer = Math.min(this.timer, 0.5); return; }
+    if (this.state === 'enter') { this.state = 'exit'; this.alpha = 1; return; }
+    if (this.state === 'exit') return;
+    if (this.bed) this.bed.taken = null;
+    this.bed = null;
     this.state = 'idle';
     this.timer = 0.1;
   }
@@ -397,7 +430,7 @@ export class Dwarf {
     }
 
     // 3) now and then carve out a cosy chamber along a gallery
-    if (Math.random() < 0.1 && this.goChamber(map)) return;
+    if (Math.random() < (w.rooms.length < g.dwarfs.length ? 0.22 : 0.06) && this.goChamber(map)) return;
 
     // 4) explore: bore a new winding gallery from somewhere in the burrow
     if (this.goBore()) return;
@@ -505,16 +538,20 @@ export class Dwarf {
     return false;
   }
 
-  // a cosy 3x2 hall: the dwarf widens the gallery and digs the ceiling from below
+  // a cosy 3x2 hall: the dwarf widens a gallery and digs the ceiling from below
   goChamber(map) {
     const g = this.game, w = g.world;
-    for (let k = 0; k < 12; k++) {
-      const x = 1 + Math.floor(Math.random() * (W - 2));
-      const y = 4 + Math.floor(Math.random() * (Math.min(w.H - 4, g.deepest + 2) - 4));
+    const yb = Math.min(w.H - 4, g.deepest + 2);
+    const spots = [];
+    for (let y = 4; y < yb; y++) for (let x = 1; x < W - 1; x++) {
       if (!w.empty(x, y) || !isFinite(costTo(map, x, y))) continue;
-      if (![x - 1, x, x + 1].every((cx) => w.solid(cx, y + 1))) continue;
+      if (![x - 1, x, x + 1].every((cx) => w.solid(cx, y + 1) && w.solid(cx, y - 1) && w.solid(cx, y - 2))) continue;
+      spots.push([x, y]);
+    }
+    for (let k = 0; k < 14 && spots.length; k++) {
+      const [x, y] = spots.splice(Math.floor(Math.random() * spots.length), 1)[0];
+      if (w.rooms.some((o) => Math.abs(o.x - x) <= 4 && Math.abs(o.y - y) <= 3)) continue;
       const cells = [[x + 1, y], [x + 1, y - 1], [x, y - 1], [x - 1, y - 1], [x - 1, y]];
-      if (cells.filter(([cx, cy]) => w.solid(cx, cy)).length < 4) continue;
       if (cells.some(([cx, cy]) => w.solid(cx, cy) && !w.canDig(cx, cy, g.pickLevel))) continue;
       if (cells.some(([cx, cy]) => w.oreAt(cx, cy) || w.flag(cx, cy, F_LADDER))) continue;
       if (w.emptyAround(x, y, 2) > 9) continue;
@@ -526,6 +563,7 @@ export class Dwarf {
       );
       this.task.x = x - 1;
       this.task.y = y;
+      this.task.room = { x, y };
       return true;
     }
     return false;
@@ -543,11 +581,15 @@ export class Dwarf {
   goRest(urgent) {
     const g = this.game;
     if (this.cy < 30 || (!urgent && this.cy < 45)) {
-      if (this.goTo('home', COTTAGE_X, -1, { noDig: true })) { this.say({ icon: 'moon' }); return; }
+      const door = g.nearestHome(this.x);
+      if (door && this.goTo('home', door.col, -1, { noDig: true, door })) { this.say({ icon: 'moon' }); return; }
     }
-    // sleep where we are – but on solid ground, not on a ladder
-    if (g.world.solid(this.cx, this.cy + 1)) { this.finish({ kind: 'sleep' }); return; }
-    const wm = dijkstra(g.world, this.cx, this.cy, { noDig: true, maxCost: 30 });
+    const wm = dijkstra(g.world, this.cx, this.cy, { noDig: true, maxCost: 45 });
+    // a free bed in a bedroom nearby?
+    const room = g.freeBed(wm, this);
+    if (room && this.goTo('sleep', room.x, room.y, { bed: room }, wm)) { room.taken = this.id; this.say({ icon: 'zzz' }); return; }
+    // otherwise sleep where we are – but on solid ground, not on a ladder
+    if (g.world.supported(this.cx, this.cy)) { this.finish({ kind: 'sleep' }); return; }
     let best = null, bc = Infinity;
     for (let y = Math.max(0, this.cy - 20); y < Math.min(g.world.H, this.cy + 20); y++) for (let x = 0; x < W; x++) {
       const c = costTo(wm, x, y);
@@ -564,12 +606,16 @@ export class Dwarf {
       case 'flag': g.flagReached(t.flag, this); break;
       case 'deposit': g.deposit(this); break;
       case 'home':
-        this.state = 'home';
+        this.state = 'enter';
+        this.door = t.door || { col: this.cx, z: 0.25 };
+        this.doorP = 0;
         this.timer = g.isNight() ? g.timeUntilMorning() + Math.random() * 8 : 16 + Math.random() * 12;
         break;
       case 'sleep':
         this.state = 'sleep';
         this.timer = 6;
+        this.bed = t.bed || null;
+        if (t.bed) t.bed.taken = this.id;
         this.say({ icon: 'zzz' }, 3);
         break;
       case 'feast':
@@ -605,6 +651,7 @@ export class Dwarf {
         if (Math.random() < 0.3) this.say(pick(['♪', '♫', { icon: 'gold' }]));
         break;
       default:
+        if (t.room) g.addRoom(t.room);
         this.timer = 0.2 + Math.random() * 0.8;
     }
   }

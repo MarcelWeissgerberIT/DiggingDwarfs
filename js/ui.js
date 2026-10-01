@@ -7,7 +7,7 @@ const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&l
 const fmt = (n) => Math.round(n).toLocaleString('de-DE');
 
 export const portraitHTML = (variant, cls = '') =>
-  `<i class="portrait ${cls}" style="background-position:0% ${variant * 33.3333}%"></i>`;
+  `<i class="portrait ${cls}" style="background-position:0% ${(variant % 6) * 20}%"></i>`;
 
 function setIcon(el, name) {
   if (el.dataset.cur === name) return;
@@ -29,6 +29,7 @@ export class UI {
     $('#btn-menu').addEventListener('click', () => this.openMenu());
     $('#btn-speed').addEventListener('click', () => this.cycleSpeed());
     $('#btn-sound').addEventListener('click', () => { this.app.audio.toggleMute(); this.app.audio.unlock(); });
+    $('#btn-watch').addEventListener('click', () => this.toggleWatch());
     $('#sheet').addEventListener('click', (e) => { if (e.target.id === 'sheet') this.closeSheet(); });
     $('#card-close').addEventListener('click', () => this.select(null));
     $('#card-follow').addEventListener('click', () => this.toggleFollow());
@@ -46,6 +47,7 @@ export class UI {
     $('#day-val').textContent = g.day;
     setIcon($('#clock-ico'), g.isNight() ? 'moon' : 'sun');
     setIcon($('#btn-sound span'), this.app.audio.muted ? 'mute' : 'sound');
+    $('#btn-watch').classList.toggle('active', !!this.app.renderer.auto);
     const full = Math.floor(g.horns);
     const frac = g.horns - full;
     const horns = $('#horns').children;
@@ -111,6 +113,7 @@ export class UI {
 
   tapWorld(cssX, cssY) {
     const r = this.app.renderer;
+    if (r.auto) r.setAuto(false);
     if (this.mode === 'flag') {
       const c = r.cellAt(cssX, cssY);
       const res = this.game.placeFlag(c.x, c.y);
@@ -128,9 +131,16 @@ export class UI {
     r.selected = d;
     if (!d) { r.follow = null; $('#dwarf-card').hidden = true; return; }
     $('#dwarf-card').hidden = false;
-    $('#card-portrait').style.backgroundPosition = `0% ${d.variant * 33.3333}%`;
+    $('#card-portrait').style.backgroundPosition = `0% ${(d.variant % 6) * 20}%`;
     $('#card-name').textContent = d.name;
     this.updateCard(true);
+  }
+
+  // observer mode: the camera wanders from dwarf to dwarf and jumps to exciting moments
+  toggleWatch() {
+    const r = this.app.renderer;
+    r.setAuto(!r.auto);
+    if (r.auto) { $('#dwarf-card').hidden = true; this.toast('Zuschauen'); }
   }
 
   toggleFollow() {
@@ -152,6 +162,7 @@ export class UI {
       $('#card-act').dataset.k = key;
       $('#card-act').innerHTML = iconSVG(icon) + `<span>${esc(label)}</span>`;
     }
+    $('#card-level').textContent = `★${d.level}`;
     $('#card-energy').style.width = `${Math.round(d.energy)}%`;
     $('#card-energy').classList.toggle('low', d.energy < 25);
     const sackKey = d.sack.map((s) => s[0]).join(',');

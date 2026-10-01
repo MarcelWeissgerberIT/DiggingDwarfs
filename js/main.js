@@ -56,7 +56,15 @@ const hooks = {
     if (!app.renderer || app.simulating) return;
     app.renderer.floater(d.x + d.facing * 0.3, d.y - 1.1, '+1', '#e8e8f0');
   },
-  cheer: (d) => { if (app.renderer && !app.simulating) app.renderer.confetti(d.x, d.y - 0.6, 16); },
+  cheer: (d) => {
+    if (!app.renderer || app.simulating) return;
+    app.renderer.confetti(d.x, d.y - 0.6, 16);
+    app.renderer.pushInterest(d);
+  },
+  built: () => {
+    if (!app.renderer || app.simulating) return;
+    app.audio.play('upgrade');
+  },
   dino: (d, dino, bonus) => {
     if (!app.renderer || app.simulating) return;
     app.renderer.confetti(dino.x + dino.w / 2, dino.y + dino.h / 2, 50);
@@ -118,6 +126,8 @@ function frame(now) {
     while (acc >= STEP && n < 12) { app.game.update(STEP); acc -= STEP; n++; }
     if (n === 12) acc = 0;
     app.input.update(dt);
+    // nobody touched the farm for a while: start watching by ourselves
+    if (!app.renderer.auto && now - app.input.lastInput > 90000 && $('#sheet').hidden) app.renderer.setAuto(true);
     app.renderer.draw(dt);
     app.ui.update(dt);
     saveT += dt;
